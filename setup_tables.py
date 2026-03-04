@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 1: Create fields and insert mock data into TABLE0/1/2."""
+"""Phase 1 表格初始化脚本：创建字段并插入测试数据到 TABLE0/1/2。"""
 
 import json
 
@@ -8,16 +8,26 @@ import requests
 from feishu import get_token, _headers
 from settings import get_settings
 
+# ── 表格地址配置 ─────────────────────────────────────────────
+
 TABLES = {
     "TABLE0": {"app_token": "OeumbrA5OaLEYpsurLBlVRDegde", "table_id": "tbl3hLBeyvNUe91s"},
     "TABLE1": {"app_token": "ZVpIbYAzXavJwPsIo7YlXBI2gJe", "table_id": "tblmBqweQeyO8Eis"},
     "TABLE2": {"app_token": "Weqqb5u5vaqVb6sX7lXlTJjxgdK", "table_id": "tblyjwU9kHwQ8Yjk"},
 }
 
+# ── 字段定义 ─────────────────────────────────────────────────
+
+# TABLE0 路由表字段
 TABLE0_FIELDS = ["archetype_app_token", "archetype_table_id", "instance_app_token", "instance_table_id"]
+# TABLE1 区域原型表字段
 TABLE1_FIELDS = ["设计风格", "特色物件", "特色图案", "配色原则", "主材质", "禁忌"]
+# TABLE2 档位规则表字段
 TABLE2_FIELDS = ["region", "tier", "价格区间", "允许物象", "禁止物象", "场景要求", "视觉质感", "容器备选"]
 
+# ── 测试数据 ─────────────────────────────────────────────────
+
+# TABLE0 路由数据：MENA 区域指向 TABLE1 和 TABLE3
 TABLE0_DATA = {
     "文本": "MENA",
     "archetype_app_token": "ZVpIbYAzXavJwPsIo7YlXBI2gJe",
@@ -26,6 +36,7 @@ TABLE0_DATA = {
     "instance_table_id": "tblxocvuizuA2W3Y",
 }
 
+# TABLE1 区域原型数据：MENA 区域的设计规范
 TABLE1_DATA = {
     "文本": "MENA",
     "设计风格": "写实为主，Pixar/Disney风格渲染，高度细节感、温润质感与叙事感",
@@ -36,6 +47,7 @@ TABLE1_DATA = {
     "禁忌": "清真寺不可直接出现(可虚拟化抽象化)/女性角色着装不可暴露/六芒星/显眼十字架/人物正面画像(宗教反偶像崇拜)/动物雕像可接受",
 }
 
+# TABLE2 档位规则数据：MENA 区域 T0-T4 各档位的设计约束
 TABLE2_ROWS = [
     {
         "文本": "MENA_T0", "region": "MENA", "tier": "T0", "价格区间": "1-99",
@@ -80,20 +92,24 @@ TABLE2_ROWS = [
 ]
 
 
+# ── 工具函数 ─────────────────────────────────────────────────
+
 def create_field(token, app_token, table_id, field_name):
+    """在多维表格中创建文本类型字段。"""
     base = get_settings().feishu_base_url
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields"
     resp = requests.post(url, headers=_headers(token), json={"field_name": field_name, "type": 1})
     if resp.status_code == 200:
-        print(f"    + Field created: {field_name}")
+        print(f"    + 字段已创建: {field_name}")
         return True
     else:
         detail = resp.json().get("msg", resp.text[:120])
-        print(f"    x Field failed ({resp.status_code}): {field_name} - {detail}")
+        print(f"    x 字段创建失败 ({resp.status_code}): {field_name} - {detail}")
         return False
 
 
 def create_record(token, app_token, table_id, fields):
+    """插入一条记录（各字段独立写入）。"""
     base = get_settings().feishu_base_url
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
     resp = requests.post(url, headers=_headers(token), json={"fields": fields})
@@ -101,12 +117,12 @@ def create_record(token, app_token, table_id, fields):
         return True
     else:
         detail = resp.json().get("msg", resp.text[:120])
-        print(f"    x Record failed ({resp.status_code}): {detail}")
+        print(f"    x 记录插入失败 ({resp.status_code}): {detail}")
         return False
 
 
 def create_record_fallback(token, app_token, table_id, fields):
-    """Fallback: store all data as JSON in the primary text field."""
+    """回退模式：将所有数据序列化为 JSON 存入「文本」字段。"""
     base = get_settings().feishu_base_url
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
     json_str = json.dumps(fields, ensure_ascii=False)
@@ -115,56 +131,65 @@ def create_record_fallback(token, app_token, table_id, fields):
         return True
     else:
         detail = resp.json().get("msg", resp.text[:120])
-        print(f"    x Fallback failed ({resp.status_code}): {detail}")
+        print(f"    x 回退插入失败 ({resp.status_code}): {detail}")
         return False
 
 
 def setup_table(token, name, app_token, table_id, field_names, records):
+    """初始化单张表格：创建字段 + 插入记录。"""
     print(f"\n{'='*50}")
-    print(f"[Setting up {name}]")
+    print(f"[正在初始化 {name}]")
     print(f"  app_token={app_token}, table_id={table_id}")
 
+    # 创建字段
     fields_ok = True
-    print(f"  Creating {len(field_names)} fields...")
+    print(f"  正在创建 {len(field_names)} 个字段...")
     for fname in field_names:
         if not create_field(token, app_token, table_id, fname):
             fields_ok = False
 
     if not fields_ok:
-        print("  WARNING: Some fields failed -> fallback mode (JSON in text field)")
+        print("  警告: 部分字段创建失败 -> 使用回退模式（JSON 存入文本字段）")
 
-    print(f"  Inserting {len(records)} record(s)...")
+    # 插入记录
+    print(f"  正在插入 {len(records)} 条记录...")
     for i, rec in enumerate(records):
         if fields_ok:
+            # 正常模式
             ok = create_record(token, app_token, table_id, rec)
             if ok:
-                print(f"    + Record {i+1}/{len(records)} OK")
+                print(f"    + 记录 {i+1}/{len(records)} 完成")
             else:
-                print(f"    Trying fallback for record {i+1}...")
+                # 正常模式失败，尝试回退
+                print(f"    尝试回退模式: 记录 {i+1}...")
                 if create_record_fallback(token, app_token, table_id, rec):
-                    print(f"    + Record {i+1}/{len(records)} OK (fallback)")
+                    print(f"    + 记录 {i+1}/{len(records)} 完成（回退模式）")
         else:
+            # 字段创建失败，直接用回退模式
             if create_record_fallback(token, app_token, table_id, rec):
-                print(f"    + Record {i+1}/{len(records)} OK (fallback)")
+                print(f"    + 记录 {i+1}/{len(records)} 完成（回退模式）")
 
-    print(f"  Done: {name}")
+    print(f"  完成: {name}")
 
+
+# ── 主入口 ───────────────────────────────────────────────────
 
 def main():
+    """认证后依次初始化 TABLE0、TABLE1、TABLE2。"""
     token = get_token()
 
-    setup_table(token, "TABLE0 (routing)",
+    setup_table(token, "TABLE0 (路由表)",
                 TABLES["TABLE0"]["app_token"], TABLES["TABLE0"]["table_id"],
                 TABLE0_FIELDS, [TABLE0_DATA])
-    setup_table(token, "TABLE1 (region info)",
+    setup_table(token, "TABLE1 (区域原型)",
                 TABLES["TABLE1"]["app_token"], TABLES["TABLE1"]["table_id"],
                 TABLE1_FIELDS, [TABLE1_DATA])
-    setup_table(token, "TABLE2 (tier rules)",
+    setup_table(token, "TABLE2 (档位规则)",
                 TABLES["TABLE2"]["app_token"], TABLES["TABLE2"]["table_id"],
                 TABLE2_FIELDS, TABLE2_ROWS)
 
     print(f"\n{'='*50}")
-    print("Setup complete! All tables configured.")
+    print("初始化完成! 所有表格已配置。")
 
 
 if __name__ == "__main__":

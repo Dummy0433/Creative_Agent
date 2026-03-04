@@ -1,6 +1,8 @@
-"""System prompts and context builders."""
+"""系统提示词与上下文构建器：为 LLM 调用组装输入。"""
 
-# ── System prompts (domain logic, not configuration) ────────
+# ── 系统提示词（领域逻辑，非配置项） ────────────────────────
+
+# 结构化分析系统提示：指导 LLM 根据设计规范输出结构化 JSON
 ANALYZE_SYSTEM = """你是专业的TikTok礼物设计 Prompt 工程师。
 根据用户输入和设计规范，输出结构化 JSON。
 
@@ -21,6 +23,7 @@ ANALYZE_SYSTEM = """你是专业的TikTok礼物设计 Prompt 工程师。
   "pattern": "yes/none"
 }"""
 
+# 提示词生成系统提示：将结构化 JSON 转为图片生成提示词
 PROMPT_GEN_SYSTEM = """你是专业图片提示词生成师。
 将结构化JSON转换为适合图片生成模型的单行提示词。
 
@@ -36,26 +39,35 @@ PROMPT_GEN_SYSTEM = """你是专业图片提示词生成师。
 
 
 def build_context(region_info: dict, tier_rules: dict) -> str:
+    """将区域信息和档位规则组装为 LLM 可读的上下文文本。"""
+    # 区域通用信息部分
     parts = ["## 区域通用信息"]
     for k in ["设计风格", "特色物件", "特色图案", "配色原则", "主材质", "禁忌"]:
         if region_info.get(k):
             parts.append(f"- {k}: {region_info[k]}")
+
+    # 档位规则部分
     parts.append("\n## 档位规则")
     for k in ["允许物象", "禁止物象", "场景要求", "视觉质感", "容器备选", "价格区间"]:
         if tier_rules.get(k):
             parts.append(f"- {k}: {tier_rules[k]}")
+
     return "\n".join(parts)
 
 
 def format_instances(instances: list[dict]) -> str:
+    """将参考案例格式化为 LLM 可读的 few-shot 示例文本。"""
     if not instances:
         return "暂无参考案例。"
+
     lines = ["## 参考案例"]
     for i, inst in enumerate(instances, 1):
+        # 兼容中英文字段名
         name = inst.get("Resource Name", inst.get("名称", f"案例{i}"))
         desc = inst.get("设计理念", "")
         style = inst.get("风格", "")
         mat = inst.get("材质", "")
         obj = inst.get("物象 II", inst.get("物象II", ""))
         lines.append(f"{i}. {name} (风格:{style}, 材质:{mat}, 物象:{obj}): {desc}")
+
     return "\n".join(lines)

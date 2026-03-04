@@ -1,35 +1,40 @@
-"""Provider registry: name -> implementation class mapping."""
+"""供应商注册表：名称 → 实现类的映射与查找。"""
 
 from settings import get_settings
 
+# 已注册的供应商字典
 _image_providers: dict[str, type] = {}
 _text_providers: dict[str, type] = {}
 
 
 def register_image_provider(name: str, cls: type):
+    """注册一个图片生成供应商。"""
     _image_providers[name] = cls
 
 
 def register_text_provider(name: str, cls: type):
+    """注册一个文本生成供应商。"""
     _text_providers[name] = cls
 
 
 def get_image_provider(name: str | None = None):
+    """根据名称获取图片供应商实例（默认从 settings 读取）。"""
     name = name or get_settings().image_provider
     cls = _image_providers.get(name)
     if cls is None:
-        raise KeyError(f"Unknown image provider: {name!r}. Registered: {list(_image_providers)}")
+        raise KeyError(f"未知的图片供应商: {name!r}，已注册: {list(_image_providers)}")
     return cls()
 
 
 def get_text_provider(name: str = "gemini"):
+    """根据名称获取文本供应商实例。"""
     cls = _text_providers.get(name)
     if cls is None:
-        raise KeyError(f"Unknown text provider: {name!r}. Registered: {list(_text_providers)}")
+        raise KeyError(f"未知的文本供应商: {name!r}，已注册: {list(_text_providers)}")
     return cls()
 
 
-# ── Auto-register built-in providers ────────────────────────
+# ── 自动注册内置供应商 ────────────────────────────────────
 from providers.gemini import GeminiImageProvider, GeminiTextProvider  # noqa: E402
 
 register_image_provider("gemini", GeminiImageProvider)
