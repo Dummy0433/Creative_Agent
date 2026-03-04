@@ -18,7 +18,7 @@ python migrate_secrets.py
 # Phase 1: Create Bitable fields and insert mock data into TABLE0/1/2
 python setup_tables.py
 
-# Phase 2: Run the full generation pipeline (CLI mode, uses .env defaults)
+# Phase 2: Run the full generation pipeline (CLI mode, uses generation_defaults.yaml)
 python app.py
 
 # Start FastAPI server
@@ -26,25 +26,41 @@ python app.py serve
 # Then: curl -X POST http://localhost:8000/generate \
 #   -H "Content-Type: application/json" \
 #   -d '{"region": "MENA", "subject": "雄狮", "price": 1}'
+# With advanced options:
+# curl -X POST http://localhost:8000/generate \
+#   -H "Content-Type: application/json" \
+#   -d '{"region":"MENA","subject":"雄狮","price":1,"image_aspect_ratio":"16:9","image_size":"2K"}'
 ```
 
 ## Architecture
 
+### Three-layer configuration
+
+| Layer | Content | Who edits | Storage |
+|-------|---------|-----------|---------|
+| **Credentials/Infra** | API keys, URLs, table addresses | Developer | `.env` |
+| **Admin defaults** | Models, image params, timeouts, prompts | Design team | `generation_defaults.yaml` (git-managed) |
+| **User request** | region, subject, price, aspect ratio, resolution | End user | Request params (bot card / API / future UI) |
+
+Pipeline receives a `GenerationConfig` object, calls `resolve()` to merge all three layers into a `ResolvedConfig` (all fields populated).
+
 ### Module structure
 
-- **`settings.py`** — `pydantic-settings` `BaseSettings`, all config from env vars / `.env`. Singleton via `get_settings()`.
-- **`models.py`** — Shared Pydantic models: `MediaType`, `GenerateRequest`, `GenerateResponse`, `PipelineResult`.
+- **`settings.py`** — `pydantic-settings` `BaseSettings`, credentials and infrastructure only. Singleton via `get_settings()`.
+- **`generation_defaults.yaml`** — Admin-tunable defaults: models, image params, timeouts, prompt overrides.
+- **`defaults.py`** — YAML loader for `generation_defaults.yaml`, cached via `load_defaults()`.
+- **`models.py`** — Shared Pydantic models: `MediaType`, `GenerationConfig`, `ResolvedConfig`, `GenerateRequest`, `GenerateResponse`, `PipelineResult`.
 - **`feishu.py`** — Feishu API: `get_token` (no-arg default from settings), `query_bitable`, `parse_record`, `upload_image`, `send_image`, `send_text`.
 - **`providers/`** — Generation provider abstraction layer:
   - `base.py` — `ImageProvider` / `TextProvider` ABCs
-  - `gemini.py` — Gemini implementations
-  - `registry.py` — Provider name → class mapping, `get_image_provider()` / `get_text_provider()`
+  - `gemini.py` — Gemini implementations (constructor accepts model/image params)
+  - `registry.py` — Provider name → class mapping, `get_image_provider(**kwargs)` / `get_text_provider(**kwargs)`
 - **`pipeline/`** — Pipeline orchestration:
   - `subject.py` — Tier detection, subject classification/validation, constants
   - `data.py` — TABLE0-3 Bitable queries
-  - `context.py` — System prompts, context/instance formatting
+  - `context.py` — System prompts (with override support), context/instance formatting
   - `postprocess.py` — `PostProcessor` ABC + chain (video extension point)
-  - `orchestrator.py` — `generate(region, subject, price) -> PipelineResult`
+  - `orchestrator.py` — `generate(config: GenerationConfig) -> PipelineResult`
 - **`media/`** — Reserved for future video post-processing implementations
 - **`app.py`** — FastAPI `POST /generate` + `POST /bot/callback` (Feishu bot stub) + CLI entry point
 - **`setup_tables.py`** — Phase 1 table setup script
@@ -52,20 +68,21 @@ python app.py serve
 
 ### Pipeline (in `pipeline/orchestrator.py`)
 
-1. Authenticate via `feishu.get_token()` (credentials from `.env`)
-2. Detect price tier (T0-T4)
-3. Query TABLE0 (routing) → TABLE1 (region info) → TABLE2 (tier rules)
-4. Validate subject against tier rules (container wrapping if forbidden)
-5. Query TABLE3 (few-shot examples)
-6. Text provider: structured analysis → prompt generation
-7. Image provider: generate image
-8. Post-process chain (save to disk; future: matting + video)
-9. Upload to Feishu → send image + caption
+1. Resolve config: `config.resolve()` merges user request + admin defaults
+2. Authenticate via `feishu.get_token()` (credentials from `.env`)
+3. Detect price tier (T0-T4)
+4. Query TABLE0 (routing) → TABLE1 (region info) → TABLE2 (tier rules)
+5. Validate subject against tier rules (container wrapping if forbidden)
+6. Query TABLE3 (few-shot examples)
+7. Text provider: structured analysis → prompt generation (models from resolved config)
+8. Image provider: generate image (models, aspect ratio, size from resolved config)
+9. Post-process chain (save to disk; future: matting + video)
+10. Upload to Feishu → send image + caption
 
 ### External services
 
 - **Feishu Bitable** — Data store for region configs and tier rules (TABLE0-3).
-- **Gemini API** — Default provider for text + image generation (pluggable via `IMAGE_PROVIDER` env var).
+- **Gemini API** — Default provider for text + image generation (pluggable via `image_provider` in defaults).
 - **Feishu Messaging** — Upload image, send to recipient via open_id.
 
 ### Key data model
@@ -78,3 +95,5 @@ python app.py serve
 ## Credentials
 
 All secrets loaded from `.env` file (or environment variables). Use `python migrate_secrets.py` to convert from the legacy YAML format. Required variables: `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_RECEIVE_ID`, `GEMINI_API_KEY`.
+
+Generation parameters (models, image settings, timeouts) are in `generation_defaults.yaml`, not `.env`.

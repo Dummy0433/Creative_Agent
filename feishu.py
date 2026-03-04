@@ -62,11 +62,22 @@ def extract_text(fields, key="文本"):
     return str(val) if val else ""
 
 
+def _is_attachment(val):
+    """判断字段值是否为飞书附件数组。
+
+    附件字段格式为 [{"file_token": "...", "name": "...", ...}, ...]
+    """
+    return (isinstance(val, list)
+            and len(val) > 0
+            and isinstance(val[0], dict)
+            and "file_token" in val[0])
+
+
 def parse_record(record):
     """解析多维表格记录。
 
     优先尝试将「文本」字段作为 JSON 解析（兼容 fallback 模式），
-    失败则逐字段提取文本值。
+    失败则逐字段提取：附件数组保留原始结构，其余走 extract_text。
     """
     raw = record.get("fields", {})
     text = extract_text(raw, "文本")
@@ -76,11 +87,30 @@ def parse_record(record):
             return data
     except (json.JSONDecodeError, TypeError):
         pass
-    # 逐字段提取为纯文本字典
+    # 逐字段提取，附件字段保留原始结构
     result = {}
     for k in raw:
-        result[k] = extract_text(raw, k)
+        val = raw[k]
+        if _is_attachment(val):
+            result[k] = val
+        else:
+            result[k] = extract_text(raw, k)
     return result
+
+
+def download_media(token, url):
+    """使用认证头下载飞书媒体资源，返回字节数据。
+
+    直接使用附件元数据中返回的 url 字段（已包含 extra 鉴权参数）。
+    """
+    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+    if not resp.ok:
+        ct = resp.headers.get("content-type", "")
+        body = resp.json() if "json" in ct else {}
+        code = body.get("code", "")
+        msg = body.get("msg", resp.text[:200])
+        raise RuntimeError(f"下载媒体失败 (HTTP {resp.status_code}, code={code}): {msg}")
+    return resp.content
 
 
 def upload_image(token, image_bytes):

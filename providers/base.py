@@ -7,8 +7,13 @@ class ImageProvider(ABC):
     """图片生成供应商抽象基类。"""
 
     @abstractmethod
-    def generate(self, prompt: str) -> bytes:
-        """根据提示词生成图片，返回图片字节数据。"""
+    def generate(self, prompt: str, reference_images: list[bytes] | None = None) -> bytes:
+        """根据提示词生成图片，返回图片字节数据。
+
+        Args:
+            prompt: 生成提示词
+            reference_images: 可选的参考图片列表，用于风格引导
+        """
         ...
 
 

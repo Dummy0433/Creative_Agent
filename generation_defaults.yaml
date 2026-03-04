@@ -1,0 +1,30 @@
+# 管理员可调默认值（设计团队维护，git 管理）
+# 用户请求中未提供的参数将使用这里的值
+
+# ── 模型选择 ────────────────────────────────────────────────
+analyze_model: "gemini-3.1-pro-preview"
+prompt_model: "gemini-3-flash-preview"
+image_provider: "gemini"
+image_models:
+  - "gemini-3.1-flash-image-preview"
+  - "gemini-3-pro-image-preview"
+
+# ── 图片参数 ────────────────────────────────────────────────
+image_aspect_ratio: "1:1"
+image_size: "1K"
+
+# ── 超时（秒）──────────────────────────────────────────────
+text_timeout: 60
+image_timeout: 180
+
+# ── 后处理 ──────────────────────────────────────────────────
+enable_postprocess: true
+
+# ── CLI / 默认请求参数 ──────────────────────────────────────
+default_region: "MENA"
+default_subject: "雄狮"
+default_price: 1
+
+# ── 提示词覆盖（null = 使用 prompts/*.md 文件）──────────────
+analyze_system_prompt: null
+prompt_gen_system_prompt: null

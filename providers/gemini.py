@@ -26,11 +26,11 @@ def _parse_json_response(text):
 class GeminiTextProvider(TextProvider):
     """基于 Gemini API 的文本生成供应商。"""
 
-    def __init__(self):
+    def __init__(self, timeout: int | None = None):
         s = get_settings()
         self.api_key = s.gemini_api_key
         self.base_url = s.gemini_base_url
-        self.timeout = s.text_timeout
+        self.timeout = timeout if timeout is not None else 60
 
     def generate(self, model: str, system_prompt: str, user_prompt: str) -> dict:
         """调用 Gemini generateContent 接口，返回结构化 JSON。"""
@@ -53,22 +53,53 @@ class GeminiImageProvider(ImageProvider):
     按 image_models 列表顺序尝试多个模型，首个成功即返回。
     """
 
-    def __init__(self):
+    def __init__(self, models: list[str] | None = None, aspect_ratio: str | None = None,
+                 image_size: str | None = None, timeout: int | None = None):
         s = get_settings()
         self.api_key = s.gemini_api_key
         self.base_url = s.gemini_base_url
-        self.models = s.image_models
-        self.timeout = s.image_timeout
+        # 生成参数由 orchestrator 从 ResolvedConfig 传入
+        from defaults import load_defaults
+        d = load_defaults()
+        self.models = models or d["image_models"]
+        self.timeout = timeout if timeout is not None else d["image_timeout"]
+        self.aspect_ratio = aspect_ratio or d["image_aspect_ratio"]
+        self.image_size = image_size or d["image_size"]
 
-    def generate(self, prompt: str) -> bytes:
+    def generate(self, prompt: str, reference_images: list[bytes] | None = None) -> bytes:
         """依次尝试候选模型生成图片，返回图片字节数据。"""
         for model in self.models:
             try:
                 print(f"  尝试模型: {model}...")
                 url = f"{self.base_url}/models/{model}:generateContent?key={self.api_key}"
+                # 构建 parts：有参考图时使用多模态输入
+                parts = []
+                if reference_images:
+                    parts.append({"text": "Reference images for style and quality guidance:"})
+                    for img in reference_images:
+                        parts.append({
+                            "inlineData": {
+                                "mimeType": "image/png",
+                                "data": base64.b64encode(img).decode(),
+                            }
+                        })
+                    parts.append({"text": f"Generate a new image in similar style:\n{prompt}"})
+                else:
+                    parts.append({"text": prompt})
                 body = {
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+                    "contents": [{"parts": parts}],
+                    "generationConfig": {
+                        "responseModalities": ["TEXT", "IMAGE"],
+                        # 图片尺寸配置
+                        "imageConfig": {
+                            "aspectRatio": self.aspect_ratio,
+                            "imageSize": self.image_size,
+                        },
+                        # 启用深度思考模式，模型会推理复杂 prompt 后再生成终稿
+                        "thinkingConfig": {
+                            "thinkingLevel": "High",
+                        },
+                    },
                 }
                 resp = requests.post(url, json=body, timeout=self.timeout)
                 resp.raise_for_status()

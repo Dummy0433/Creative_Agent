@@ -24,6 +24,8 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
 )
 
 import feishu
+from defaults import load_defaults
+from models import GenerationConfig
 from pipeline import generate
 from settings import get_settings
 
@@ -69,6 +71,38 @@ GENERATE_CARD = {
                     "placeholder": {"tag": "plain_text", "content": "e.g. 雄狮 (optional)"},
                     "label": {"tag": "plain_text", "content": "Object"},
                 },
+                # ── 高级选项分隔线 ──────────────────────────
+                {
+                    "tag": "hr",
+                },
+                {
+                    "tag": "markdown",
+                    "content": "**Advanced Options** (optional)",
+                },
+                {
+                    # 宽高比下拉
+                    "tag": "select_static",
+                    "placeholder": {"tag": "plain_text", "content": "Aspect Ratio (default: 1:1)"},
+                    "name": "aspect_ratio",
+                    "options": [
+                        {"text": {"tag": "plain_text", "content": "1:1"}, "value": "1:1"},
+                        {"text": {"tag": "plain_text", "content": "16:9"}, "value": "16:9"},
+                        {"text": {"tag": "plain_text", "content": "9:16"}, "value": "9:16"},
+                        {"text": {"tag": "plain_text", "content": "3:4"}, "value": "3:4"},
+                        {"text": {"tag": "plain_text", "content": "4:3"}, "value": "4:3"},
+                    ],
+                },
+                {
+                    # 分辨率下拉
+                    "tag": "select_static",
+                    "placeholder": {"tag": "plain_text", "content": "Resolution (default: 1K)"},
+                    "name": "image_size",
+                    "options": [
+                        {"text": {"tag": "plain_text", "content": "512px"}, "value": "512px"},
+                        {"text": {"tag": "plain_text", "content": "1K"}, "value": "1K"},
+                        {"text": {"tag": "plain_text", "content": "2K"}, "value": "2K"},
+                    ],
+                },
                 {
                     # 提交按钮
                     "tag": "button",
@@ -93,15 +127,15 @@ def parse_input(text: str) -> dict:
         主体 价格         (如 "玫瑰 100"，使用默认区域)
         主体              (如 "雪山"，使用默认价格和区域)
     """
-    s = get_settings()
+    d = load_defaults()
     parts = text.strip().split()
 
     if not parts:
         return {}
 
     subject = parts[0]
-    price = s.default_price
-    region = s.default_region
+    price = d["default_price"]
+    region = d["default_region"]
 
     # 第二个参数为价格（纯数字）
     if len(parts) >= 2 and parts[1].isdigit():
@@ -113,18 +147,18 @@ def parse_input(text: str) -> dict:
     return {"subject": subject, "price": price, "region": region}
 
 
-def handle_generate(sender_id: str, region: str, subject: str, price: int) -> None:
+def handle_generate(sender_id: str, config: GenerationConfig) -> None:
     """在新线程中运行生成 Pipeline 并将结果发回给用户。"""
     token = feishu.get_token()
 
     # 先发送一条提示消息
     feishu.send_text(
         token, sender_id,
-        f"正在生成: {subject} | {price} coins | {region}...",
+        f"正在生成: {config.subject} | {config.price} coins | {config.region}...",
     )
 
     try:
-        result = generate(region, subject, price)
+        result = generate(config)
         logger.info("生成完成: %s", result.status)
     except Exception as e:
         traceback.print_exc()
@@ -157,10 +191,12 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
         feishu.send_text(token, sender_id, "请输入: 物象 [价格] [区域]\n例: 雄狮 1 MENA")
         return
 
+    config = GenerationConfig(**params)
+
     # 在新线程中执行生成，避免阻塞事件循环
     threading.Thread(
         target=handle_generate,
-        args=(sender_id, params["region"], params["subject"], params["price"]),
+        args=(sender_id, config),
         daemon=True,
     ).start()
 
@@ -182,14 +218,15 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
         elif event_key == "debug":
             # 发送调试信息
             token = feishu.get_token()
+            d = load_defaults()
             s = get_settings()
             debug_info = (
-                f"image_provider: {s.image_provider}\n"
-                f"text_model: {s.text_model}\n"
-                f"image_models: {s.image_models}\n"
+                f"image_provider: {d.get('image_provider', 'gemini')}\n"
+                f"analyze_model: {d['analyze_model']}\n"
+                f"image_models: {d['image_models']}\n"
                 f"log_level: {s.log_level}\n"
-                f"default_region: {s.default_region}\n"
-                f"default_price: {s.default_price}"
+                f"default_region: {d['default_region']}\n"
+                f"default_price: {d['default_price']}"
             )
             feishu.send_text(token, open_id, debug_info)
         elif event_key == "inspire":
@@ -206,7 +243,7 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
 def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
     """处理卡片表单提交事件。
 
-    从 form_value 中提取 region / price / object，在新线程中触发生成。
+    从 form_value 中提取 region / price / object + 高级选项，构造 GenerationConfig。
     返回 toast 提示告知用户已开始生成。
     """
     try:
@@ -217,21 +254,30 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
 
         print(f"[卡片] 用户={open_id}, 表单={form_value}")
 
-        s = get_settings()
-        region = form_value.get("region", s.default_region)
-        price_str = form_value.get("price", str(s.default_price))
-        subject = form_value.get("object", "").strip() or s.default_subject
+        d = load_defaults()
+        region = form_value.get("region", d["default_region"])
+        price_str = form_value.get("price", str(d["default_price"]))
+        subject = form_value.get("object", "").strip() or d["default_subject"]
 
         # 安全解析价格
         try:
             price = int(price_str)
         except (ValueError, TypeError):
-            price = s.default_price
+            price = d["default_price"]
+
+        # 构造 GenerationConfig，高级选项为 None 时使用默认值
+        config = GenerationConfig(
+            region=region,
+            subject=subject,
+            price=price,
+            image_aspect_ratio=form_value.get("aspect_ratio"),
+            image_size=form_value.get("image_size"),
+        )
 
         # 在新线程中执行生成
         threading.Thread(
             target=handle_generate,
-            args=(open_id, region, subject, price),
+            args=(open_id, config),
             daemon=True,
         ).start()
 

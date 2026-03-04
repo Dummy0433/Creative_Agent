@@ -1,21 +1,27 @@
 """FastAPI 接口 + CLI 入口：礼物生成服务。"""
 
+import logging
 import sys
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from models import GenerateRequest, GenerateResponse
+from defaults import load_defaults
+from models import GenerateRequest, GenerateResponse, GenerationConfig
 from pipeline import generate
-from settings import get_settings
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 app = FastAPI(title="Gift Service")
 
 
 @app.post("/generate", response_model=GenerateResponse)
 def generate_endpoint(req: GenerateRequest):
-    """生成接口：接收 region / subject / price，返回生成结果。"""
-    result = generate(req.region, req.subject, req.price)
+    """生成接口：接收 region / subject / price（+ 可选高级参数），返回生成结果。"""
+    result = generate(req.to_config())
     return result
 
 
@@ -36,6 +42,11 @@ if __name__ == "__main__":
         import uvicorn
         uvicorn.run(app, host="0.0.0.0", port=8000)
     else:
-        # CLI 模式：使用默认参数直接运行 Pipeline
-        s = get_settings()
-        generate(s.default_region, s.default_subject, s.default_price)
+        # CLI 模式：从 generation_defaults.yaml 读取默认参数
+        d = load_defaults()
+        config = GenerationConfig(
+            region=d["default_region"],
+            subject=d["default_subject"],
+            price=d["default_price"],
+        )
+        generate(config)

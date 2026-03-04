@@ -1,41 +1,27 @@
 """系统提示词与上下文构建器：为 LLM 调用组装输入。"""
 
-# ── 系统提示词（领域逻辑，非配置项） ────────────────────────
+from functools import lru_cache
+from pathlib import Path
 
-# 结构化分析系统提示：指导 LLM 根据设计规范输出结构化 JSON
-ANALYZE_SYSTEM = """你是专业的TikTok礼物设计 Prompt 工程师。
-根据用户输入和设计规范，输出结构化 JSON。
+# ── 提示词文件目录 ────────────────────────────────────────
+_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-## 通用禁忌（所有区域）
-- 严禁：政治/宗教娱乐化/丧葬/色情/血腥暴力/歧视
-- 严禁：未经授权的IP与品牌
-- 禁止：王冠/奖杯/龙/私人飞机等"尊贵"锚点
-- 禁止：低幼元素（婴儿/校车/棒棒糖）
-- 不得遮挡主播面部
 
-## 输出格式（严格JSON）
-{
-  "subject_final": "最终主体描述",
-  "color_palette": "配色自然语言描述",
-  "material": "材质描述",
-  "background": "背景描述",
-  "region_style": "区域风格描述",
-  "pattern": "yes/none"
-}"""
+@lru_cache
+def _load_prompt(filename: str) -> str:
+    """从 prompts/ 目录加载提示词文件，结果缓存避免重复读取。"""
+    path = _PROMPTS_DIR / filename
+    return path.read_text(encoding="utf-8").strip()
 
-# 提示词生成系统提示：将结构化 JSON 转为图片生成提示词
-PROMPT_GEN_SYSTEM = """你是专业图片提示词生成师。
-将结构化JSON转换为适合图片生成模型的单行提示词。
 
-固定开头：保证高质量 C4D OCTANE 卡通渲染的风格，视觉重心指向右方，
-整体呈三分之二正面视角（约30°-40°俯视），主体占比整体画面的95%，
-主体居中且呈现完整造型非局部造型，画面背景为纯黑色的纯色块背景便于抠图。
+def get_analyze_system(override: str | None = None) -> str:
+    """获取结构化分析的系统提示词。优先使用覆盖值，否则读 prompts/*.md 文件。"""
+    return override if override else _load_prompt("analyze_system.md")
 
-输出严格JSON：
-{
-  "prompt": "完整中文提示词",
-  "english_prompt": "Complete English prompt"
-}"""
+
+def get_prompt_gen_system(override: str | None = None) -> str:
+    """获取提示词扩写的系统提示词。优先使用覆盖值，否则读 prompts/*.md 文件。"""
+    return override if override else _load_prompt("prompt_gen_system.md")
 
 
 def build_context(region_info: dict, tier_rules: dict) -> str:

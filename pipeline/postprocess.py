@@ -1,10 +1,14 @@
 """后处理链：可扩展的处理器模式，当前实现图片保存，预留视频生成扩展点。"""
 
+import logging
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from models import PipelineResult
 from settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class PostProcessor(ABC):
@@ -25,10 +29,13 @@ class ImageSaveProcessor(PostProcessor):
         # 确保输出目录存在
         output_dir = Path(get_settings().output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        # 保存图片
-        path = output_dir / "output.png"
+        # 用主体+档位+时间戳生成有意义的文件名
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{result.subject_final}_{result.tier}_{ts}.png"
+        path = output_dir / filename
         path.write_bytes(result.media_bytes)
-        print(f"  已保存到 {path}")
+        result.local_path = str(path)
+        logger.info("  已保存到 %s", path)
         return result
 
 
