@@ -1,5 +1,5 @@
-"""Pipeline 编排包，对外暴露 generate 入口函数。"""
+"""Pipeline 编排包，对外暴露入口函数。"""
 
-from pipeline.orchestrator import generate
+from pipeline.orchestrator import generate, generate_candidates, finalize_selected
 
-__all__ = ["generate"]
+__all__ = ["generate", "generate_candidates", "finalize_selected"]
