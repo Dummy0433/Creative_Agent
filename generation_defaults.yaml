@@ -28,3 +28,17 @@ default_price: 1
 # ── 提示词覆盖（null = 使用 prompts/*.md 文件）──────────────
 analyze_system_prompt: null
 prompt_gen_system_prompt: null
+
+# ── 层级配置 ──────────────────────────────────────────────────
+# 每个层级可独立配置提示词文件和可选的模型/图片参数覆盖
+# 未配置的层级使用全局默认提示词 (analyze_system.md / prompt_gen_system.md)
+tier_profiles:
+  P0:
+    analyze_prompt_file: "analyze_P0.md"
+    prompt_gen_prompt_file: "prompt_gen_P0.md"
+  P1:
+    analyze_prompt_file: "analyze_P1.md"
+    prompt_gen_prompt_file: "prompt_gen_P1.md"
+  P2:
+    analyze_prompt_file: "analyze_P2.md"
+    prompt_gen_prompt_file: "prompt_gen_P2.md"

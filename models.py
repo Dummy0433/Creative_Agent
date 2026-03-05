@@ -27,6 +27,21 @@ class MediaType(str, Enum):
     VIDEO = "video"
 
 
+# ── 层级配置 ──────────────────────────────────────────────────
+
+
+class TierProfile(BaseModel):
+    """层级配置：提示词文件路径 + 可选参数覆盖。
+
+    未设置的可选字段在运行时继承全局默认值。
+    """
+    analyze_prompt_file: str                    # prompts/ 下的分析提示词文件名
+    prompt_gen_prompt_file: str                 # prompts/ 下的生图提示词文件名
+    image_models: list[str] | None = None       # 可选：覆盖图片模型列表
+    image_size: str | None = None               # 可选：覆盖图片尺寸
+    image_aspect_ratio: str | None = None       # 可选：覆盖图片宽高比
+
+
 # ── 管理员默认值（类型化 YAML）────────────────────────────────
 
 
@@ -55,6 +70,8 @@ class GenerationDefaults(BaseModel):
     # 提示词覆盖（None = 使用 prompts/*.md 文件）
     analyze_system_prompt: str | None = None
     prompt_gen_system_prompt: str | None = None
+    # 层级配置（键=层级名 如 "P0"，值=TierProfile）
+    tier_profiles: dict[str, TierProfile] = {}
 
 
 # ── 三层配置模型 ──────────────────────────────────────────────
