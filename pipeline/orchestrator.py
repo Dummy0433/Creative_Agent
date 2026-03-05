@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 _TIER_KEYS = ("价格层级", "tier", "Tier", "price_tier")
 
 # 并行生成候选图数量
-_NUM_CANDIDATES = 4
+_NUM_CANDIDATES = 1
 
 
 def _log_dict(label: str, data: dict, rid: str) -> None:

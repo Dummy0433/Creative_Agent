@@ -13,10 +13,12 @@
 
 ## 输出格式（严格JSON）
 {
-  "subject_final": "最终主体描述",
-  "color_palette": "配色自然语言描述",
-  "material": "材质描述",
-  "background": "背景描述",
-  "region_style": "区域风格描述",
+  "SUBJECT_AND_DETAILS": "最终主体描述",
+  "COLOR_PALETTE": "配色自然语言描述",
+  "MATERIAL_1": "材质描述1",
+  "MATERIAL_2": "材质描述2",
+  "BACKGROUND": "背景描述",
+  "REGION_STYLE": "区域风格描述",
+  "OPTIONAL_TEXT": "需要转成图片的文字形状",
   "pattern": "yes/none"
 }
