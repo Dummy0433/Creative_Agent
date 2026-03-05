@@ -33,3 +33,29 @@ def test_generation_defaults_empty_tier_profiles():
     from models import GenerationDefaults
     d = GenerationDefaults(analyze_model="m", prompt_model="m", image_models=["m"])
     assert d.tier_profiles == {}
+
+
+def test_candidate_result_model():
+    """CandidateResult 基础字段。"""
+    from models import CandidateResult
+    cr = CandidateResult(
+        request_id="abc123", tier="P0", subject_final="雄狮徽章",
+        prompt="中文提示词", english_prompt="english prompt",
+        image_keys=["key1", "key2", "key3", "key4"],
+        image_bytes_list=[b"img1", b"img2", b"img3", b"img4"],
+        region="MENA", price=1,
+    )
+    assert len(cr.image_keys) == 4
+    assert cr.tier == "P0"
+
+
+def test_candidate_result_excludes_bytes():
+    """image_bytes_list 不应出现在序列化输出中。"""
+    from models import CandidateResult
+    cr = CandidateResult(
+        request_id="x", tier="P0", subject_final="s", prompt="p",
+        english_prompt="e", image_keys=["k"], image_bytes_list=[b"b"],
+        region="MENA", price=1,
+    )
+    d = cr.model_dump()
+    assert "image_bytes_list" not in d

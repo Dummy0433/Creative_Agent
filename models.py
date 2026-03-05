@@ -195,3 +195,16 @@ class PipelineResult(BaseModel):
     message_id: str = ""     # 飞书消息 ID（发送后获得）
     local_path: str = ""     # 本地保存路径（后处理后填充）
     media_bytes: bytes | None = Field(default=None, exclude=True)  # 原始媒体字节（不序列化）
+
+
+class CandidateResult(BaseModel):
+    """Phase 1 输出：多张候选图 + 元数据，等待用户选择。"""
+    request_id: str                  # 请求追踪 ID
+    tier: str                        # 匹配到的价格层级
+    subject_final: str               # 最终主体（可能已被容器包裹）
+    prompt: str                      # 中文提示词
+    english_prompt: str              # 英文提示词
+    image_keys: list[str]            # 飞书 image_key 列表
+    image_bytes_list: list[bytes] = Field(default_factory=list, exclude=True)  # 原始图片字节（不序列化）
+    region: str                      # 区域
+    price: int                       # 价格
