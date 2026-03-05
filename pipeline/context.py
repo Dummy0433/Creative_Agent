@@ -14,14 +14,22 @@ def _load_prompt(filename: str) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
-def get_analyze_system(override: str | None = None) -> str:
-    """获取结构化分析的系统提示词。优先使用覆盖值，否则读 prompts/*.md 文件。"""
-    return override if override else _load_prompt("analyze_system.md")
+def get_analyze_system(override: str | None = None, tier_file: str | None = None) -> str:
+    """获取结构化分析的系统提示词。优先级：override > tier_file > 默认文件。"""
+    if override:
+        return override
+    if tier_file:
+        return _load_prompt(tier_file)
+    return _load_prompt("analyze_system.md")
 
 
-def get_prompt_gen_system(override: str | None = None) -> str:
-    """获取提示词扩写的系统提示词。优先使用覆盖值，否则读 prompts/*.md 文件。"""
-    return override if override else _load_prompt("prompt_gen_system.md")
+def get_prompt_gen_system(override: str | None = None, tier_file: str | None = None) -> str:
+    """获取提示词扩写的系统提示词。优先级：override > tier_file > 默认文件。"""
+    if override:
+        return override
+    if tier_file:
+        return _load_prompt(tier_file)
+    return _load_prompt("prompt_gen_system.md")
 
 
 def build_context(region_info: dict, tier_rules: dict) -> str:

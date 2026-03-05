@@ -61,3 +61,35 @@ def test_format_instances_chinese_name():
     instances = [{"名称": "金色雄狮", "风格": "写实", "材质": "金属", "物象II": "狮"}]
     result = format_instances(instances)
     assert "金色雄狮" in result
+
+
+# ── get_analyze_system / get_prompt_gen_system tier_file 测试 ───────
+
+
+def test_get_analyze_system_tier_file(tmp_path, monkeypatch):
+    """指定 tier_file 时从对应文件加载。"""
+    from pipeline import context
+    tier_file = tmp_path / "analyze_P0.md"
+    tier_file.write_text("P0 专用分析提示词", encoding="utf-8")
+    monkeypatch.setattr(context, "_PROMPTS_DIR", tmp_path)
+    context._load_prompt.cache_clear()
+    result = context.get_analyze_system(tier_file="analyze_P0.md")
+    assert result == "P0 专用分析提示词"
+
+
+def test_get_analyze_system_override_beats_tier_file():
+    """override 参数优先级高于 tier_file。"""
+    from pipeline.context import get_analyze_system
+    result = get_analyze_system(override="直接覆盖", tier_file="analyze_P0.md")
+    assert result == "直接覆盖"
+
+
+def test_get_prompt_gen_system_tier_file(tmp_path, monkeypatch):
+    """prompt_gen 也支持 tier_file。"""
+    from pipeline import context
+    tier_file = tmp_path / "prompt_gen_P0.md"
+    tier_file.write_text("P0 专用提示词生成", encoding="utf-8")
+    monkeypatch.setattr(context, "_PROMPTS_DIR", tmp_path)
+    context._load_prompt.cache_clear()
+    result = context.get_prompt_gen_system(tier_file="prompt_gen_P0.md")
+    assert result == "P0 专用提示词生成"
