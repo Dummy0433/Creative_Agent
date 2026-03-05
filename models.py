@@ -58,6 +58,7 @@ class GenerationDefaults(BaseModel):
     # 图片参数
     image_aspect_ratio: str = "1:1"
     image_size: str = "1K"
+    candidate_count: int = 4
     # 超时（秒）
     text_timeout: int = 60
     image_timeout: int = 180
@@ -118,6 +119,7 @@ class GenerationConfig(BaseModel):
             text_timeout=self.text_timeout if self.text_timeout is not None else d.text_timeout,
             image_timeout=self.image_timeout if self.image_timeout is not None else d.image_timeout,
             enable_postprocess=self.enable_postprocess if self.enable_postprocess is not None else d.enable_postprocess,
+            candidate_count=d.candidate_count,
             analyze_system_prompt=self.analyze_system_prompt or d.analyze_system_prompt,
             prompt_gen_system_prompt=self.prompt_gen_system_prompt or d.prompt_gen_system_prompt,
         )
@@ -138,6 +140,7 @@ class ResolvedConfig(BaseModel):
     text_timeout: int
     image_timeout: int
     enable_postprocess: bool
+    candidate_count: int = 4
     analyze_system_prompt: str | None = None
     prompt_gen_system_prompt: str | None = None
 
@@ -208,3 +211,4 @@ class CandidateResult(BaseModel):
     image_bytes_list: list[bytes] = Field(default_factory=list, exclude=True)  # 原始图片字节（不序列化）
     region: str                      # 区域
     price: int                       # 价格
+    config: "GenerationConfig | None" = None  # 原始请求配置（用于 regenerate）

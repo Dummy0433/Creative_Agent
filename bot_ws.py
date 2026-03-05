@@ -1,7 +1,10 @@
 """飞书机器人长连接 (WebSocket) 客户端。
 
-启动方式:  python bot_ws.py
-接收飞书消息，处理菜单点击和卡片表单提交，触发生成 Pipeline 并回传结果。
+启动方式:
+    python bot_ws.py          # 正常启动
+    python bot_ws.py --card   # 先发送 mock 候选卡片，再启动 WS 监听回调
+
+接收飞书消息，处理菜单点击和卡片交互，触发生成 Pipeline 并回传结果。
 
 文本模式消息格式示例（仍然支持）：
     雄狮 1 MENA
@@ -25,100 +28,17 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
 )
 
 import feishu
+from cards import GENERATE_FORM_CARD, build_candidate_card, build_mock_candidate
 from defaults import load_defaults
 from models import GenerationConfig
 from pipeline import generate_candidates, finalize_selected
+from pipeline.candidate_store import get as get_candidate
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 # 线程池：用于异步执行生成任务，避免阻塞事件循环
 _generate_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gen")
-
-# ── 生成表单卡片 JSON ────────────────────────────────────────
-# 用户点击 Generate 菜单后发送此交互卡片
-
-GENERATE_CARD = {
-    "header": {
-        "title": {"tag": "plain_text", "content": "Gift Generator"},
-        "template": "blue",
-    },
-    "elements": [
-        {
-            "tag": "form",
-            "name": "generate_form",
-            "elements": [
-                {
-                    # 区域下拉选择
-                    "tag": "select_static",
-                    "placeholder": {"tag": "plain_text", "content": "Select region"},
-                    "name": "region",
-                    "initial_option": "General",
-                    "options": [
-                        {"text": {"tag": "plain_text", "content": "MENA"}, "value": "MENA"},
-                        {"text": {"tag": "plain_text", "content": "TR"}, "value": "TR"},
-                        {"text": {"tag": "plain_text", "content": "General"}, "value": "General"},
-                    ],
-                },
-                {
-                    # 价格输入框
-                    "tag": "input",
-                    "name": "price",
-                    "placeholder": {"tag": "plain_text", "content": "Price (coins)"},
-                    "default_value": "1",
-                    "label": {"tag": "plain_text", "content": "Price"},
-                },
-                {
-                    # 物象输入框（可选）
-                    "tag": "input",
-                    "name": "object",
-                    "placeholder": {"tag": "plain_text", "content": "e.g. 雄狮 (optional)"},
-                    "label": {"tag": "plain_text", "content": "Object"},
-                },
-                # ── 高级选项分隔线 ──────────────────────────
-                {
-                    "tag": "hr",
-                },
-                {
-                    "tag": "markdown",
-                    "content": "**Advanced Options** (optional)",
-                },
-                {
-                    # 宽高比下拉
-                    "tag": "select_static",
-                    "placeholder": {"tag": "plain_text", "content": "Aspect Ratio (default: 1:1)"},
-                    "name": "aspect_ratio",
-                    "options": [
-                        {"text": {"tag": "plain_text", "content": "1:1"}, "value": "1:1"},
-                        {"text": {"tag": "plain_text", "content": "16:9"}, "value": "16:9"},
-                        {"text": {"tag": "plain_text", "content": "9:16"}, "value": "9:16"},
-                        {"text": {"tag": "plain_text", "content": "3:4"}, "value": "3:4"},
-                        {"text": {"tag": "plain_text", "content": "4:3"}, "value": "4:3"},
-                    ],
-                },
-                {
-                    # 分辨率下拉
-                    "tag": "select_static",
-                    "placeholder": {"tag": "plain_text", "content": "Resolution (default: 1K)"},
-                    "name": "image_size",
-                    "options": [
-                        {"text": {"tag": "plain_text", "content": "512px"}, "value": "512px"},
-                        {"text": {"tag": "plain_text", "content": "1K"}, "value": "1K"},
-                        {"text": {"tag": "plain_text", "content": "2K"}, "value": "2K"},
-                    ],
-                },
-                {
-                    # 提交按钮
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": "Start Generation"},
-                    "type": "primary",
-                    "action_type": "form_submit",
-                    "name": "generate_submit",
-                },
-            ],
-        },
-    ],
-}
 
 
 # ── 辅助函数 ─────────────────────────────────────────────────
@@ -141,49 +61,12 @@ def parse_input(text: str) -> dict:
     price = d.default_price
     region = d.default_region
 
-    # 第二个参数为价格（纯数字）
     if len(parts) >= 2 and parts[1].isdigit():
         price = int(parts[1])
-    # 第三个参数为区域
     if len(parts) >= 3:
         region = parts[2].upper()
 
     return {"subject": subject, "price": price, "region": region}
-
-
-def build_candidate_card(candidate) -> dict:
-    """构建候选图选择卡片。
-
-    展示所有候选图 + 每张图的选择按钮，按钮携带 request_id 和 index。
-    TODO: 后续由用户提供正式飞书卡片 JSON 模板。
-    """
-    elements = []
-    for i, key in enumerate(candidate.image_keys):
-        # 图片展示
-        elements.append({
-            "tag": "img",
-            "img_key": key,
-            "alt": {"tag": "plain_text", "content": f"候选图 {i + 1}"},
-        })
-        # 选择按钮
-        elements.append({
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": f"选择方案 {i + 1}"},
-            "type": "primary" if i == 0 else "default",
-            "value": {
-                "action": "candidate_select",
-                "request_id": candidate.request_id,
-                "selected_index": i,
-            },
-        })
-
-    return {
-        "header": {
-            "title": {"tag": "plain_text", "content": f"候选图 | {candidate.subject_final} | {candidate.tier}"},
-            "template": "blue",
-        },
-        "elements": elements,
-    }
 
 
 def handle_generate(sender_id: str, config: GenerationConfig) -> None:
@@ -197,7 +80,6 @@ def handle_generate(sender_id: str, config: GenerationConfig) -> None:
 
     try:
         candidate = generate_candidates(config)
-        # 发送候选图选择卡片
         card = build_candidate_card(candidate)
         feishu.send_card(token, sender_id, card)
         logger.info("已发送 %d 张候选图卡片: %s", len(candidate.image_keys), candidate.request_id)
@@ -229,7 +111,6 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
 
     logger.info("[消息] %s: %s", sender_id, content)
 
-    # 只处理文本消息
     if msg_type != "text":
         return
 
@@ -237,7 +118,6 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
     if not text:
         return
 
-    # 解析输入参数
     params = parse_input(text)
     if not params:
         token = feishu.get_token()
@@ -246,7 +126,6 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
 
     config = GenerationConfig(**params)
 
-    # 在新线程中执行生成，避免阻塞事件循环
     threading.Thread(
         target=handle_generate,
         args=(sender_id, config),
@@ -265,11 +144,9 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
         print(f"[菜单] 用户={open_id}, 事件={event_key}")
 
         if event_key == "generate":
-            # 发送生成表单卡片
             token = feishu.get_token()
-            feishu.send_card(token, open_id, GENERATE_CARD)
+            feishu.send_card(token, open_id, GENERATE_FORM_CARD)
         elif event_key == "debug":
-            # 发送调试信息
             token = feishu.get_token()
             d = load_defaults()
             s = get_settings()
@@ -283,7 +160,6 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
             )
             feishu.send_text(token, open_id, debug_info)
         elif event_key == "inspire":
-            # 灵感模式（预留）
             token = feishu.get_token()
             feishu.send_text(token, open_id, "灵感模式即将上线!")
         else:
@@ -293,33 +169,59 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
         traceback.print_exc()
 
 
+def _make_toast(content: str, toast_type: str = "info") -> P2CardActionTriggerResponse:
+    """快速构造带 toast 的卡片回调响应。"""
+    resp = P2CardActionTriggerResponse()
+    resp.toast = CallBackToast()
+    resp.toast.type = toast_type
+    resp.toast.content = content
+    return resp
+
+
 def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
     """处理卡片交互事件。
 
     路由逻辑：
-    - action.value 含 candidate_select → 候选图选择 → Phase 2
-    - form_value 有值 → 生成表单提交 → Phase 1
+    - candidate_select → 选中候选图 → Phase 2 (finalize + 下载)
+    - regenerate       → 用同样配置重新生成
+    - modify_request   → 返回生成表单卡片
+    - form_value 有值  → 生成表单提交 → Phase 1
     """
     try:
         event = data.event
         open_id = event.operator.open_id
         action = event.action
-
-        # 路由1: 候选图选择按钮
         action_value = action.value
-        if isinstance(action_value, dict) and action_value.get("action") == "candidate_select":
-            rid = action_value["request_id"]
-            idx = action_value["selected_index"]
-            logger.info("[卡片] 用户=%s 选择候选图: request_id=%s, index=%d", open_id, rid, idx)
-            _generate_pool.submit(handle_finalize, open_id, rid, idx)
 
-            resp = P2CardActionTriggerResponse()
-            resp.toast = CallBackToast()
-            resp.toast.type = "info"
-            resp.toast.content = f"已选择方案 {idx + 1}，正在处理..."
-            return resp
+        if isinstance(action_value, dict):
+            act = action_value.get("action")
+            rid = action_value.get("request_id", "")
 
-        # 路由2: 生成表单提交（现有逻辑）
+            # ── 选择候选图 (A/B/C/D) → Phase 2 ──
+            if act == "candidate_select":
+                idx = action_value["selected_index"]
+                logger.info("[卡片] 用户=%s 选择候选图: request_id=%s, index=%d", open_id, rid, idx)
+                _generate_pool.submit(handle_finalize, open_id, rid, idx)
+                return _make_toast(f"已选择方案 {chr(65 + idx)}，正在处理...")
+
+            # ── Regenerate → 用原始配置重新生成 ──
+            if act == "regenerate":
+                logger.info("[卡片] 用户=%s 请求重新生成: request_id=%s", open_id, rid)
+                candidate = get_candidate(rid)
+                if candidate and candidate.config:
+                    _generate_pool.submit(handle_generate, open_id, candidate.config)
+                    return _make_toast("正在重新生成，请稍候...")
+                else:
+                    return _make_toast("候选图已过期，请重新提交请求", "warning")
+
+            # ── Modify Request → 发回生成表单 ──
+            if act == "modify_request":
+                logger.info("[卡片] 用户=%s 修改请求: request_id=%s", open_id, rid)
+                token = feishu.get_token()
+                feishu.send_card(token, open_id, GENERATE_FORM_CARD)
+                return _make_toast("请在新卡片中修改参数")
+
+        # ── 生成表单提交 ──
         form_value = action.form_value or {}
         if form_value:
             logger.info("[卡片] 用户=%s, 表单=%s", open_id, form_value)
@@ -329,13 +231,11 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
             price_str = form_value.get("price", str(d.default_price))
             subject = form_value.get("object", "").strip() or d.default_subject
 
-            # 安全解析价格
             try:
                 price = int(price_str)
             except (ValueError, TypeError):
                 price = d.default_price
 
-            # 构造 GenerationConfig，高级选项为 None 时使用默认值
             config = GenerationConfig(
                 region=region,
                 subject=subject,
@@ -345,12 +245,7 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
             )
 
             _generate_pool.submit(handle_generate, open_id, config)
-
-            resp = P2CardActionTriggerResponse()
-            resp.toast = CallBackToast()
-            resp.toast.type = "info"
-            resp.toast.content = f"正在生成: {subject} | {price} coins | {region}..."
-            return resp
+            return _make_toast(f"正在生成: {subject} | {price} coins | {region}...")
 
         return P2CardActionTriggerResponse()
     except Exception as e:
@@ -362,24 +257,33 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
 
 def main():
     """启动飞书 WebSocket 长连接机器人。"""
+    import sys
+
     s = get_settings()
 
-    # 配置日志格式和级别
     logging.basicConfig(
         level=getattr(logging, s.log_level.upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
+    # --card: 发送 mock 卡片后继续启动 WS 监听回调
+    if "--card" in sys.argv:
+        token = feishu.get_token()
+        candidate = build_mock_candidate(token)
+        card = build_candidate_card(candidate)
+        msg_id = feishu.send_card(token, s.feishu_receive_id, card)
+        print(f"Mock 卡片已发送! message_id={msg_id}")
+        print("启动 WebSocket 监听回调...")
+
     # 注册事件处理器
     event_handler = (
         lark.EventDispatcherHandler.builder("", "")
-        .register_p2_im_message_receive_v1(on_message)       # 文本消息
-        .register_p2_application_bot_menu_v6(on_menu)         # 菜单点击
-        .register_p2_card_action_trigger(on_card_action)      # 卡片表单提交
+        .register_p2_im_message_receive_v1(on_message)
+        .register_p2_application_bot_menu_v6(on_menu)
+        .register_p2_card_action_trigger(on_card_action)
         .build()
     )
 
-    # 创建 WebSocket 客户端并启动
     cli = lark.ws.Client(
         s.feishu_app_id,
         s.feishu_app_secret,
@@ -388,7 +292,6 @@ def main():
     )
 
     logger.info("飞书礼物机器人已就绪!")
-    logger.info("支持: 文本消息、Generate 菜单、卡片表单提交")
     cli.start()
 
 

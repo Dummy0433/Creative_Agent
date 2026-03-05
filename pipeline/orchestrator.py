@@ -26,9 +26,6 @@ logger = logging.getLogger(__name__)
 # 档位字段名（双语兼容），与 data.py 保持一致
 _TIER_KEYS = ("价格层级", "tier", "Tier", "price_tier")
 
-# 并行生成候选图数量
-_NUM_CANDIDATES = 1
-
 
 def _log_dict(label: str, data: dict, rid: str) -> None:
     """以可读格式打印字典内容到 INFO 日志，带 request_id 前缀。"""
@@ -139,17 +136,17 @@ def generate_candidates(config: GenerationConfig) -> CandidateResult:
     logger.info("[%s]   英文提示词: %s", rid, prompts.get('english_prompt', ''))
 
     # 步骤8: 4x 并行生图
-    logger.info("[%s] [步骤8] 正在并行生成 %d 张候选图...", rid, _NUM_CANDIDATES)
+    logger.info("[%s] [步骤8] 正在并行生成 %d 张候选图...", rid, cfg.candidate_count)
     image_provider = get_image_provider(
         name=cfg.image_provider, models=cfg.image_models,
         aspect_ratio=cfg.image_aspect_ratio, image_size=cfg.image_size,
         timeout=cfg.image_timeout,
     )
-    with ThreadPoolExecutor(max_workers=_NUM_CANDIDATES) as pool:
+    with ThreadPoolExecutor(max_workers=cfg.candidate_count) as pool:
         futures = [
             pool.submit(image_provider.generate, prompts["english_prompt"],
                         reference_images=ref_images or None)
-            for _ in range(_NUM_CANDIDATES)
+            for _ in range(cfg.candidate_count)
         ]
         image_list: list[bytes] = []
         for i, f in enumerate(futures):
@@ -179,7 +176,7 @@ def generate_candidates(config: GenerationConfig) -> CandidateResult:
         request_id=rid, tier=tier, subject_final=subject_final,
         prompt=prompts["prompt"], english_prompt=prompts["english_prompt"],
         image_keys=image_keys, image_bytes_list=image_list,
-        region=region, price=price,
+        region=region, price=price, config=config,
     )
     store_candidate(candidate)
 
