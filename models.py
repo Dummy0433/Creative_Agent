@@ -3,16 +3,58 @@
 from __future__ import annotations
 
 from enum import Enum
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
 from defaults import load_defaults
 
 
+class RoutingInfo(BaseModel):
+    """TABLE0 路由结果：区域 → 各表格物理地址映射。"""
+    region: str                  # 区域名称
+    archetype_app_token: str     # TABLE1 应用 token
+    archetype_table_id: str      # TABLE1 表格 ID
+    rules_app_token: str         # TABLE2 应用 token
+    rules_table_id: str          # TABLE2 表格 ID
+    instance_app_token: str      # TABLE3 应用 token
+    instance_table_id: str       # TABLE3 表格 ID
+
+
 class MediaType(str, Enum):
     """媒体类型枚举：图片或视频。"""
     IMAGE = "image"
     VIDEO = "video"
+
+
+# ── 管理员默认值（类型化 YAML）────────────────────────────────
+
+
+class GenerationDefaults(BaseModel):
+    """generation_defaults.yaml 的类型化模型。
+
+    启动时校验，YAML 字段拼写错误会立即报错而非运行时 KeyError。
+    """
+    # 模型选择
+    analyze_model: str
+    prompt_model: str
+    image_provider: str = "gemini"
+    image_models: list[str]
+    # 图片参数
+    image_aspect_ratio: str = "1:1"
+    image_size: str = "1K"
+    # 超时（秒）
+    text_timeout: int = 60
+    image_timeout: int = 180
+    # 后处理
+    enable_postprocess: bool = True
+    # CLI / 默认请求参数
+    default_region: str = "MENA"
+    default_subject: str = "雄狮"
+    default_price: int = 1
+    # 提示词覆盖（None = 使用 prompts/*.md 文件）
+    analyze_system_prompt: str | None = None
+    prompt_gen_system_prompt: str | None = None
 
 
 # ── 三层配置模型 ──────────────────────────────────────────────
@@ -27,6 +69,8 @@ class GenerationConfig(BaseModel):
     region: str
     subject: str
     price: int = Field(ge=1, le=29999)
+    # 请求追踪 ID（自动生成 8 位十六进制）
+    request_id: str = Field(default_factory=lambda: uuid4().hex[:8])
     # 可选覆盖（None = 使用管理员默认值）
     image_aspect_ratio: str | None = None
     image_size: str | None = None
@@ -47,17 +91,18 @@ class GenerationConfig(BaseModel):
             region=self.region,
             subject=self.subject,
             price=self.price,
-            image_aspect_ratio=self.image_aspect_ratio or d["image_aspect_ratio"],
-            image_size=self.image_size or d["image_size"],
-            analyze_model=self.analyze_model or d["analyze_model"],
-            prompt_model=self.prompt_model or d["prompt_model"],
-            image_models=self.image_models or d["image_models"],
-            image_provider=self.image_provider or d["image_provider"],
-            text_timeout=self.text_timeout if self.text_timeout is not None else d["text_timeout"],
-            image_timeout=self.image_timeout if self.image_timeout is not None else d["image_timeout"],
-            enable_postprocess=self.enable_postprocess if self.enable_postprocess is not None else d["enable_postprocess"],
-            analyze_system_prompt=self.analyze_system_prompt or d.get("analyze_system_prompt"),
-            prompt_gen_system_prompt=self.prompt_gen_system_prompt or d.get("prompt_gen_system_prompt"),
+            request_id=self.request_id,
+            image_aspect_ratio=self.image_aspect_ratio or d.image_aspect_ratio,
+            image_size=self.image_size or d.image_size,
+            analyze_model=self.analyze_model or d.analyze_model,
+            prompt_model=self.prompt_model or d.prompt_model,
+            image_models=self.image_models or d.image_models,
+            image_provider=self.image_provider or d.image_provider,
+            text_timeout=self.text_timeout if self.text_timeout is not None else d.text_timeout,
+            image_timeout=self.image_timeout if self.image_timeout is not None else d.image_timeout,
+            enable_postprocess=self.enable_postprocess if self.enable_postprocess is not None else d.enable_postprocess,
+            analyze_system_prompt=self.analyze_system_prompt or d.analyze_system_prompt,
+            prompt_gen_system_prompt=self.prompt_gen_system_prompt or d.prompt_gen_system_prompt,
         )
 
 
@@ -66,6 +111,7 @@ class ResolvedConfig(BaseModel):
     region: str
     subject: str
     price: int
+    request_id: str = ""
     image_aspect_ratio: str
     image_size: str
     analyze_model: str
@@ -126,6 +172,8 @@ class PipelineResult(BaseModel):
     english_prompt: str      # 英文提示词
     media_type: MediaType = MediaType.IMAGE  # 媒体类型
     status: str              # 当前状态
+    error_message: str = ""  # 错误信息（status="error" 或 "generated_but_send_failed" 时填充）
+    request_id: str = ""     # 请求追踪 ID
     image_key: str = ""      # 飞书图片 key（上传后获得）
     message_id: str = ""     # 飞书消息 ID（发送后获得）
     local_path: str = ""     # 本地保存路径（后处理后填充）

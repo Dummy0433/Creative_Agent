@@ -1,13 +1,22 @@
-"""多维表格查询：区域信息、档位规则、参考案例。"""
+"""多维表格查询：路由表、区域信息、档位规则、参考案例。"""
+
+from __future__ import annotations
 
 import logging
 import random
 import re
+import time
 
 import feishu
+from models import RoutingInfo
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+# ── TABLE0 路由缓存 ──────────────────────────────────────
+# 结构：{region: (RoutingInfo, timestamp)}，TTL 600秒（10分钟）
+_routing_cache: dict[str, tuple[RoutingInfo, float]] = {}
+_ROUTING_TTL = 600  # 缓存过期时间（秒）
 
 # ── 双语搜索键（兼容中英文字段名） ──────────────────────────
 
@@ -48,11 +57,94 @@ def _parse_price_range(text: str) -> tuple[int, int]:
 
 # ── 查询函数 ────────────────────────────────────────────────
 
-def query_region_info(token: str, region: str) -> dict:
-    """查询 TABLE1（区域原型），返回该区域的设计风格、特色物件等信息。"""
+def query_routing(token: str, region: str) -> RoutingInfo | None:
+    """查询 TABLE0（路由表），返回该区域对应的各表格物理地址。
+
+    结果缓存 10 分钟。查询失败或未找到区域时返回 None。
+    """
+    # 检查缓存
+    now = time.time()
+    if region in _routing_cache:
+        cached, ts = _routing_cache[region]
+        if now - ts < _ROUTING_TTL:
+            logger.info("[路由] 缓存命中: 区域=%s", region)
+            return cached
+
     s = get_settings()
+    # TABLE0 地址为空时跳过查询
+    if not s.table0_app_token or not s.table0_table_id:
+        logger.info("[路由] TABLE0 地址未配置，跳过路由查询")
+        return None
+
+    try:
+        logger.info("[路由] 正在查询 TABLE0(路由表) 区域=%s", region)
+        records = feishu.query_bitable(token, s.table0_app_token, s.table0_table_id)
+    except Exception as e:
+        logger.warning("[路由] TABLE0 查询失败: %s，将使用 settings 默认地址", e)
+        return None
+
+    # TABLE0 字段名列表
+    routing_fields = [
+        "archetype_app_token", "archetype_table_id",
+        "rules_app_token", "rules_table_id",
+        "instance_app_token", "instance_table_id",
+    ]
+
+    # 遍历记录，匹配区域
+    for rec in records:
+        data = feishu.parse_record(rec)
+        if not _match_region(data, region):
+            continue
+        # 提取 6 个地址字段
+        routing_data = {"region": region}
+        for field_name in routing_fields:
+            routing_data[field_name] = data.get(field_name, "")
+        # 校验完整性：6 个地址字段必须非空
+        missing = [k for k in routing_fields if not routing_data.get(k)]
+        if missing:
+            logger.warning("[路由] TABLE0 区域=%s 数据不完整，缺失: %s，将使用 settings 默认地址",
+                           region, missing)
+            return None
+        routing = RoutingInfo(**routing_data)
+        # 写入缓存
+        _routing_cache[region] = (routing, now)
+        logger.info("[路由] TABLE0 解析成功: 区域=%s", region)
+        return routing
+
+    logger.warning("[路由] TABLE0 中未找到区域 '%s'，将使用 settings 默认地址", region)
+    return None
+
+
+def resolve_routing(token: str, region: str) -> RoutingInfo:
+    """解析路由信息：TABLE0 查询 + settings fallback，保证始终返回有效值。"""
+    routing = query_routing(token, region)
+    if routing:
+        return routing
+    # Fallback：从 settings 构建默认路由
+    s = get_settings()
+    logger.info("[路由] 使用 settings 默认地址作为 fallback")
+    return RoutingInfo(
+        region=region,
+        archetype_app_token=s.table1_app_token,
+        archetype_table_id=s.table1_table_id,
+        rules_app_token=s.table2_app_token,
+        rules_table_id=s.table2_table_id,
+        instance_app_token=s.table3_app_token,
+        instance_table_id=s.table3_table_id,
+    )
+
+
+# ── 查询函数 ────────────────────────────────────────────────
+
+def query_region_info(token: str, region: str, routing: RoutingInfo | None = None) -> dict:
+    """查询 TABLE1（区域原型），返回该区域的设计风格、特色物件等信息。"""
+    if routing:
+        app_token, table_id = routing.archetype_app_token, routing.archetype_table_id
+    else:
+        s = get_settings()
+        app_token, table_id = s.table1_app_token, s.table1_table_id
     logger.info("[数据] 正在查询 TABLE1(区域原型) 区域=%s", region)
-    records = feishu.query_bitable(token, s.table1_app_token, s.table1_table_id)
+    records = feishu.query_bitable(token, app_token, table_id)
     if not records:
         raise RuntimeError("TABLE1 为空")
     # 遍历记录，匹配区域
@@ -66,14 +158,18 @@ def query_region_info(token: str, region: str) -> dict:
     )
 
 
-def query_tier_rules(token: str, region: str, price: int) -> dict:
+def query_tier_rules(token: str, region: str, price: int, routing: RoutingInfo | None = None) -> dict:
     """查询 TABLE2（档位规则），根据区域和价格匹配对应档位。
 
     匹配逻辑：先按区域筛选，再判断价格是否落在「价格区间」内。
     """
-    s = get_settings()
+    if routing:
+        app_token, table_id = routing.rules_app_token, routing.rules_table_id
+    else:
+        s = get_settings()
+        app_token, table_id = s.table2_app_token, s.table2_table_id
     logger.info("[数据] 正在查询 TABLE2(档位规则) 区域=%s, 价格=%d", region, price)
-    records = feishu.query_bitable(token, s.table2_app_token, s.table2_table_id)
+    records = feishu.query_bitable(token, app_token, table_id)
 
     candidates = []  # 收集同区域的候选档位（用于错误提示）
     for rec in records:
@@ -122,7 +218,8 @@ def _match_price_tier_instance(data: dict, price: int) -> bool:
     return False
 
 
-def query_instances(token: str, region: str, price: int = 0, limit: int = 3) -> list[dict]:
+def query_instances(token: str, region: str, price: int = 0, limit: int = 3,
+                    routing: RoutingInfo | None = None) -> list[dict]:
     """查询 TABLE3（参考案例），按区域和价格档位筛选后随机返回指定数量的案例。
 
     筛选逻辑：
@@ -131,9 +228,13 @@ def query_instances(token: str, region: str, price: int = 0, limit: int = 3) -> 
     3. 无价格匹配时 fallback 到区域匹配结果
     4. 随机 shuffle 后取前 limit 条
     """
-    s = get_settings()
+    if routing:
+        app_token, table_id = routing.instance_app_token, routing.instance_table_id
+    else:
+        s = get_settings()
+        app_token, table_id = s.table3_app_token, s.table3_table_id
     logger.info("[数据] 正在查询 TABLE3(参考案例) 区域=%s, 价格=%d", region, price)
-    records = feishu.query_bitable(token, s.table3_app_token, s.table3_table_id)
+    records = feishu.query_bitable(token, app_token, table_id)
     all_parsed = [feishu.parse_record(rec) for rec in records]
 
     # 检查是否有任何记录包含区域字段

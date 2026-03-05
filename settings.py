@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"  # Gemini API 基地址
 
     # ── 多维表格地址 ─────────────────────────────────────────
+    # TABLE0（路由表）：区域 → 各表格物理地址映射
+    table0_app_token: str = "OeumbrA5OaLEYpsurLBlVRDegde"   # TABLE0(路由表) 应用 token
+    table0_table_id: str = "tbl3hLBeyvNUe91s"                # TABLE0 表格 ID
+    # TABLE1/2/3 地址保留作为 TABLE0 不可用时的 fallback
     table1_app_token: str = "ZVpIbYAzXavJwPsIo7YlXBI2gJe"   # TABLE1(区域原型) 应用 token
     table1_table_id: str = "tblmBqweQeyO8Eis"                # TABLE1 表格 ID
     table2_app_token: str = "Weqqb5u5vaqVb6sX7lXlTJjxgdK"   # TABLE2(档位规则) 应用 token
