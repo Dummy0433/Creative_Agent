@@ -13,6 +13,7 @@ import json
 import logging
 import threading
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 import lark_oapi as lark
 from lark_oapi.api.application.v6 import P2ApplicationBotMenuV6
@@ -26,10 +27,13 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
 import feishu
 from defaults import load_defaults
 from models import GenerationConfig
-from pipeline import generate
+from pipeline import generate_candidates, finalize_selected
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+# 线程池：用于异步执行生成任务，避免阻塞事件循环
+_generate_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gen")
 
 # ── 生成表单卡片 JSON ────────────────────────────────────────
 # 用户点击 Generate 菜单后发送此交互卡片
@@ -147,22 +151,71 @@ def parse_input(text: str) -> dict:
     return {"subject": subject, "price": price, "region": region}
 
 
+def build_candidate_card(candidate) -> dict:
+    """构建候选图选择卡片。
+
+    展示所有候选图 + 每张图的选择按钮，按钮携带 request_id 和 index。
+    TODO: 后续由用户提供正式飞书卡片 JSON 模板。
+    """
+    elements = []
+    for i, key in enumerate(candidate.image_keys):
+        # 图片展示
+        elements.append({
+            "tag": "img",
+            "img_key": key,
+            "alt": {"tag": "plain_text", "content": f"候选图 {i + 1}"},
+        })
+        # 选择按钮
+        elements.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": f"选择方案 {i + 1}"},
+            "type": "primary" if i == 0 else "default",
+            "value": {
+                "action": "candidate_select",
+                "request_id": candidate.request_id,
+                "selected_index": i,
+            },
+        })
+
+    return {
+        "header": {
+            "title": {"tag": "plain_text", "content": f"候选图 | {candidate.subject_final} | {candidate.tier}"},
+            "template": "blue",
+        },
+        "elements": elements,
+    }
+
+
 def handle_generate(sender_id: str, config: GenerationConfig) -> None:
-    """在新线程中运行生成 Pipeline 并将结果发回给用户。"""
+    """Phase 1: 生成候选图并发送选择卡片。"""
     token = feishu.get_token()
 
-    # 先发送一条提示消息
     feishu.send_text(
         token, sender_id,
         f"正在生成: {config.subject} | {config.price} coins | {config.region}...",
     )
 
     try:
-        result = generate(config)
-        logger.info("生成完成: %s", result.status)
+        candidate = generate_candidates(config)
+        # 发送候选图选择卡片
+        card = build_candidate_card(candidate)
+        feishu.send_card(token, sender_id, card)
+        logger.info("已发送 %d 张候选图卡片: %s", len(candidate.image_keys), candidate.request_id)
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Phase 1 失败: %s", e, exc_info=True)
         feishu.send_text(token, sender_id, f"生成失败: {e}")
+
+
+def handle_finalize(sender_id: str, request_id: str, selected_index: int) -> None:
+    """Phase 2: 处理用户选择，执行后处理并发送最终结果。"""
+    token = feishu.get_token()
+    try:
+        feishu.send_text(token, sender_id, f"已选择方案 {selected_index + 1}，正在处理...")
+        result = finalize_selected(request_id, selected_index)
+        logger.info("Phase 2 完成: %s -> %s", request_id, result.status)
+    except Exception as e:
+        logger.error("Phase 2 失败: %s", e, exc_info=True)
+        feishu.send_text(token, sender_id, f"处理失败: {e}")
 
 
 # ── 事件处理器 ───────────────────────────────────────────────
@@ -241,55 +294,67 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
 
 
 def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
-    """处理卡片表单提交事件。
+    """处理卡片交互事件。
 
-    从 form_value 中提取 region / price / object + 高级选项，构造 GenerationConfig。
-    返回 toast 提示告知用户已开始生成。
+    路由逻辑：
+    - action.value 含 candidate_select → 候选图选择 → Phase 2
+    - form_value 有值 → 生成表单提交 → Phase 1
     """
     try:
         event = data.event
         open_id = event.operator.open_id
         action = event.action
+
+        # 路由1: 候选图选择按钮
+        action_value = action.value
+        if isinstance(action_value, dict) and action_value.get("action") == "candidate_select":
+            rid = action_value["request_id"]
+            idx = action_value["selected_index"]
+            logger.info("[卡片] 用户=%s 选择候选图: request_id=%s, index=%d", open_id, rid, idx)
+            _generate_pool.submit(handle_finalize, open_id, rid, idx)
+
+            resp = P2CardActionTriggerResponse()
+            resp.toast = CallBackToast()
+            resp.toast.type = "info"
+            resp.toast.content = f"已选择方案 {idx + 1}，正在处理..."
+            return resp
+
+        # 路由2: 生成表单提交（现有逻辑）
         form_value = action.form_value or {}
+        if form_value:
+            logger.info("[卡片] 用户=%s, 表单=%s", open_id, form_value)
 
-        print(f"[卡片] 用户={open_id}, 表单={form_value}")
+            d = load_defaults()
+            region = form_value.get("region", d.default_region)
+            price_str = form_value.get("price", str(d.default_price))
+            subject = form_value.get("object", "").strip() or d.default_subject
 
-        d = load_defaults()
-        region = form_value.get("region", d.default_region)
-        price_str = form_value.get("price", str(d.default_price))
-        subject = form_value.get("object", "").strip() or d.default_subject
+            # 安全解析价格
+            try:
+                price = int(price_str)
+            except (ValueError, TypeError):
+                price = d.default_price
 
-        # 安全解析价格
-        try:
-            price = int(price_str)
-        except (ValueError, TypeError):
-            price = d.default_price
+            # 构造 GenerationConfig，高级选项为 None 时使用默认值
+            config = GenerationConfig(
+                region=region,
+                subject=subject,
+                price=price,
+                image_aspect_ratio=form_value.get("aspect_ratio"),
+                image_size=form_value.get("image_size"),
+            )
 
-        # 构造 GenerationConfig，高级选项为 None 时使用默认值
-        config = GenerationConfig(
-            region=region,
-            subject=subject,
-            price=price,
-            image_aspect_ratio=form_value.get("aspect_ratio"),
-            image_size=form_value.get("image_size"),
-        )
+            _generate_pool.submit(handle_generate, open_id, config)
 
-        # 在新线程中执行生成
-        threading.Thread(
-            target=handle_generate,
-            args=(open_id, config),
-            daemon=True,
-        ).start()
+            resp = P2CardActionTriggerResponse()
+            resp.toast = CallBackToast()
+            resp.toast.type = "info"
+            resp.toast.content = f"正在生成: {subject} | {price} coins | {region}..."
+            return resp
 
-        # 返回 toast 提示
-        resp = P2CardActionTriggerResponse()
-        resp.toast = CallBackToast()
-        resp.toast.type = "info"
-        resp.toast.content = f"正在生成: {subject} | {price} coins | {region}..."
-        return resp
+        return P2CardActionTriggerResponse()
     except Exception as e:
-        print(f"[卡片] 错误: {e}")
-        traceback.print_exc()
+        logger.error("[卡片] 错误: %s", e, exc_info=True)
         return P2CardActionTriggerResponse()
 
 
