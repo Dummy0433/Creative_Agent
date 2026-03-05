@@ -19,7 +19,7 @@ def register_text_provider(name: str, cls: type):
 
 def get_image_provider(name: str | None = None, **kwargs):
     """根据名称获取图片供应商实例，透传 kwargs 到构造函数。"""
-    name = name or load_defaults().get("image_provider", "gemini")
+    name = name or load_defaults().image_provider
     cls = _image_providers.get(name)
     if cls is None:
         raise KeyError(f"未知的图片供应商: {name!r}，已注册: {list(_image_providers)}")

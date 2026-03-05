@@ -61,10 +61,10 @@ class GeminiImageProvider(ImageProvider):
         # 生成参数由 orchestrator 从 ResolvedConfig 传入
         from defaults import load_defaults
         d = load_defaults()
-        self.models = models or d["image_models"]
-        self.timeout = timeout if timeout is not None else d["image_timeout"]
-        self.aspect_ratio = aspect_ratio or d["image_aspect_ratio"]
-        self.image_size = image_size or d["image_size"]
+        self.models = models or d.image_models
+        self.timeout = timeout if timeout is not None else d.image_timeout
+        self.aspect_ratio = aspect_ratio or d.image_aspect_ratio
+        self.image_size = image_size or d.image_size
 
     def generate(self, prompt: str, reference_images: list[bytes] | None = None) -> bytes:
         """依次尝试候选模型生成图片，返回图片字节数据。"""

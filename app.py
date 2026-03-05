@@ -45,8 +45,8 @@ if __name__ == "__main__":
         # CLI 模式：从 generation_defaults.yaml 读取默认参数
         d = load_defaults()
         config = GenerationConfig(
-            region=d["default_region"],
-            subject=d["default_subject"],
-            price=d["default_price"],
+            region=d.default_region,
+            subject=d.default_subject,
+            price=d.default_price,
         )
         generate(config)

@@ -134,8 +134,8 @@ def parse_input(text: str) -> dict:
         return {}
 
     subject = parts[0]
-    price = d["default_price"]
-    region = d["default_region"]
+    price = d.default_price
+    region = d.default_region
 
     # 第二个参数为价格（纯数字）
     if len(parts) >= 2 and parts[1].isdigit():
@@ -221,12 +221,12 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
             d = load_defaults()
             s = get_settings()
             debug_info = (
-                f"image_provider: {d.get('image_provider', 'gemini')}\n"
-                f"analyze_model: {d['analyze_model']}\n"
-                f"image_models: {d['image_models']}\n"
+                f"image_provider: {d.image_provider}\n"
+                f"analyze_model: {d.analyze_model}\n"
+                f"image_models: {d.image_models}\n"
                 f"log_level: {s.log_level}\n"
-                f"default_region: {d['default_region']}\n"
-                f"default_price: {d['default_price']}"
+                f"default_region: {d.default_region}\n"
+                f"default_price: {d.default_price}"
             )
             feishu.send_text(token, open_id, debug_info)
         elif event_key == "inspire":
@@ -255,15 +255,15 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
         print(f"[卡片] 用户={open_id}, 表单={form_value}")
 
         d = load_defaults()
-        region = form_value.get("region", d["default_region"])
-        price_str = form_value.get("price", str(d["default_price"]))
-        subject = form_value.get("object", "").strip() or d["default_subject"]
+        region = form_value.get("region", d.default_region)
+        price_str = form_value.get("price", str(d.default_price))
+        subject = form_value.get("object", "").strip() or d.default_subject
 
         # 安全解析价格
         try:
             price = int(price_str)
         except (ValueError, TypeError):
-            price = d["default_price"]
+            price = d.default_price
 
         # 构造 GenerationConfig，高级选项为 None 时使用默认值
         config = GenerationConfig(
