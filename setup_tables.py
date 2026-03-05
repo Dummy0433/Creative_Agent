@@ -550,6 +550,13 @@ def route_command():
         logger.error("以下区域在 TABLE0 中不存在: %s，请先添加", errors)
         sys.exit(1)
 
+    # TABLE1 共用一张表，未检测到时自动填充 settings 默认值
+    table1_auto_filled: set[str] = set()
+    for region, detected in by_region.items():
+        if "table1" not in detected:
+            detected["table1"] = (s.table1_app_token, s.table1_table_id)
+            table1_auto_filled.add(region)
+
     # 预览所有变更
     logger.info("=" * 56)
     for region, detected in by_region.items():
@@ -562,7 +569,8 @@ def route_command():
             old_app = extract_text(existing_raw, app_key) or "(空)"
             old_id = extract_text(existing_raw, id_key) or "(空)"
             new_app, new_id = detected[ttype]
-            logger.info("  %s:", _TABLE_TYPE_NAMES[ttype])
+            suffix = " (默认值)" if ttype == "table1" and region in table1_auto_filled else ""
+            logger.info("  %s%s:", _TABLE_TYPE_NAMES[ttype], suffix)
             logger.info("    app_token: %s → %s", old_app, new_app)
             logger.info("    table_id:  %s → %s", old_id, new_id)
     logger.info("=" * 56)
