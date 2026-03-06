@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw
 
 # 从 postprocess.py 导入参数，保持单一来源
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pipeline.postprocess import _ASSETS_DIR, _PANEL_TEMPLATE, _GIFT_SLOT_CENTER, _GIFT_SLOT_SIZE
+from pipeline.postprocess import _ASSETS_DIR, _PANEL_TEMPLATE, _GIFT_SLOT_CENTER, _GIFT_ICON_SIZE as _GIFT_SLOT_SIZE
 
 
 def main():

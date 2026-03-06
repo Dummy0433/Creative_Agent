@@ -25,22 +25,24 @@ _BADGE_NEW = _ASSETS_DIR / "badge_new.png"            # 60×26 @2x "New" 角标
 _COIN_ICON = _ASSETS_DIR / "coin_icon.png"            # 20×20 @2x 金币图标
 _FONT_PATH = _ASSETS_DIR / "TikTokSans-Medium.ttf"   # TikTok 官方字体
 
-# ── Gift Panel 拼图参数（全部 @2x，780x904 模板）──────────────
-# Figma 1x: 容器 70×70, 距上 80px, 距左 23.5px
-_GIFT_SLOT_CENTER = (117, 230)   # slot 中心 (x, y) @2x
+# ── Gift Panel 拼图参数（全部 @2x，基于 Figma 标注）─────────────
+# Figma @1x: 礼物单元 89.75×110, Mask 56×56, 面板 390×452
+_GIFT_SLOT_CENTER = (106, 260)   # slot 中心 @2x — Figma: (25+28, 102+28)@1x → (106, 260)
 _GIFT_ICON_SIZE = 112            # Mask 56×56 @1x → 112 @2x
 
-# 文字 Y 定位：基于 mask 底部的固定偏移（从底图 Rose 实测校准）
-# mask 底部 = slot_center_y + 56 = 286
-# Rose 名字顶部 y=333, Rose 价格顶部 y=359
-_MASK_BOTTOM_TO_NAME = 47        # mask 底 → 名字顶 (333-286=47)
-_NAME_TO_PRICE_GAP = 14          # 名字底 → 价格顶 (359-345=14)
+# Figma @1x 垂直间距 → @2x
+# name Top=76 in unit, unit Top=88, icon bottom @1x=158 → gap=164-158=6 @1x=12 @2x
+_MASK_BOTTOM_TO_NAME = 12        # mask 底 → 名字顶 @2x (Figma: 6px @1x)
+_NAME_TO_PRICE_GAP = 4           # 名字底 → 价格顶 @2x (估算 ~2px @1x)
 
-# Figma CSS 标注 @1x → Pillow 校准 @2x
-# font-size: 9px @1x, 但 Pillow size=18 渲染 "Rose" 高度=13px 精确匹配底图
-_FONT_SIZE = 18
+# Figma Typography @1x → @2x
+# font: "TikTok Text", 9px, weight 500, line-height 130%, letter-spacing 2.29%
+_FONT_SIZE = 18                  # 9px @1x → 18 @2x
+_LINE_HEIGHT = 24                # Figma text container 12px @1x → 24 @2x (稳定行高)
 _TEXT_COLOR = (255, 255, 255, 191)  # rgba(255,255,255,0.75)
-_COIN_TEXT_GAP = 2               # coin 与价格文字间距
+_COIN_SIZE = 20                  # Figma 10×10 @1x → 20×20 @2x
+_COIN_TEXT_GAP = 4               # Figma Gap: 2px @1x → 4 @2x
+_NAME_MAX_WIDTH = 180            # Figma name Fixed 90px @1x → 180 @2x
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
@@ -77,9 +79,9 @@ def composite(matted_bytes: bytes, gift_name: str = "",
     mask_half = _GIFT_ICON_SIZE // 2
     mask_bottom = cy + mask_half  # 固定参考线，不随 icon 内容变化
 
-    # ① 礼物图标：缩放到容器内，居中粘贴（允许出血溢出）
+    # ① 礼物图标：resize 填满 mask（Figma cover 模式，未来均为 1:1）
     gift = Image.open(io.BytesIO(matted_bytes)).convert("RGBA")
-    gift.thumbnail((_GIFT_ICON_SIZE, _GIFT_ICON_SIZE), Image.LANCZOS)
+    gift = gift.resize((_GIFT_ICON_SIZE, _GIFT_ICON_SIZE), Image.LANCZOS)
     paste_x = cx - gift.width // 2
     paste_y = cy - gift.height // 2
     panel.paste(gift, (paste_x, paste_y), gift)
@@ -98,37 +100,49 @@ def composite(matted_bytes: bytes, gift_name: str = "",
         draw = ImageDraw.Draw(text_layer)
         font = _load_font(_FONT_SIZE)
 
-        # 名字：固定 Y 位置 = mask底 + 47px, 水平居中于 slot
+        # 名字：固定 Y 位置 = mask底 + 47px, anchor="mt" 水平居中于 slot
         name_y = mask_bottom + _MASK_BOTTOM_TO_NAME
         if gift_name:
-            name_bbox = font.getbbox(gift_name)
-            name_w = name_bbox[2] - name_bbox[0]
-            name_h = name_bbox[3] - name_bbox[1]
-            name_x = cx - name_w // 2
-            draw.text((name_x, name_y), gift_name, fill=_TEXT_COLOR, font=font)
-            name_bottom = name_y + name_h
-        else:
-            name_bottom = name_y
+            # 截断超宽名字（Figma name 容器 98px @1x = 196px @2x）
+            display_name = gift_name
+            while (font.getlength(display_name) > _NAME_MAX_WIDTH
+                   and len(display_name) > 1):
+                display_name = display_name[:-1]
+            if display_name != gift_name:
+                display_name = display_name[:-1] + "…"
+            draw.text((cx, name_y), display_name,
+                      fill=_TEXT_COLOR, font=font, anchor="mt")
+        # 稳定行高：130% line-height，不随字符内容波动
+        name_bottom_y = name_y + _LINE_HEIGHT
 
-        # 价格行：固定 Y = 名字底 + 14px, 文字居中, coin 吸附文字左侧
+        # 价格行：coin + 文字整体居中（Figma: coin 10×10 + gap + price text）
         if price > 0:
             price_str = str(price)
-            price_bbox = font.getbbox(price_str)
-            price_w = price_bbox[2] - price_bbox[0]
-            price_h = price_bbox[3] - price_bbox[1]
-            price_y = name_bottom + _NAME_TO_PRICE_GAP
+            price_text_w = font.getlength(price_str)
+            price_y = name_bottom_y + _NAME_TO_PRICE_GAP
 
-            # 价格文字先居中
-            price_x = cx - price_w // 2
-            draw.text((price_x, price_y), price_str, fill=_TEXT_COLOR, font=font)
-
-            # coin 吸附在文字最左边
+            # 加载 coin 并强制 resize 到标准尺寸
+            coin = None
+            coin_w = 0
             if _COIN_ICON.exists():
                 coin = Image.open(_COIN_ICON).convert("RGBA")
-                coin_w, coin_h = coin.size
-                coin_x = price_x - _COIN_TEXT_GAP - coin_w
-                coin_y = price_y + (price_h - coin_h) // 2
-                text_layer.paste(coin, (coin_x, coin_y), coin)
+                if coin.size != (_COIN_SIZE, _COIN_SIZE):
+                    coin = coin.resize((_COIN_SIZE, _COIN_SIZE), Image.LANCZOS)
+                coin_w = _COIN_SIZE
+
+            # 整组宽度 = coin + gap + text，整体居中于 slot
+            total_w = (coin_w + _COIN_TEXT_GAP if coin else 0) + price_text_w
+            group_x = cx - total_w / 2
+
+            if coin:
+                coin_y = price_y + (_LINE_HEIGHT - _COIN_SIZE) // 2
+                text_layer.paste(coin, (round(group_x), coin_y), coin)
+                text_x = round(group_x) + coin_w + _COIN_TEXT_GAP
+            else:
+                text_x = round(group_x)
+
+            draw.text((text_x, price_y), price_str,
+                      fill=_TEXT_COLOR, font=font)
 
         panel = Image.alpha_composite(panel, text_layer)
 
