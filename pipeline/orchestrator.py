@@ -155,7 +155,7 @@ def generate_candidates(config: GenerationConfig) -> CandidateResult:
     preview_list: list[bytes] = []
     for i, img in enumerate(image_list):
         try:
-            matted, preview = matting_and_composite(img)
+            matted, preview = matting_and_composite(img, gift_name=subject_final, price=price)
             matted_list.append(matted)
             preview_list.append(preview)
             logger.debug("[%s]   候选图 %d: 抠图 %d 字节, 预览 %d 字节",
