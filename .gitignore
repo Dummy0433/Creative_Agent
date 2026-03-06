@@ -5,3 +5,5 @@ output/
 *.png
 !assets/*.png
 *.pyc
+.DS_Store
+firebase-debug.log
