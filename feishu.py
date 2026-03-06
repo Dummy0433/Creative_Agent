@@ -1,26 +1,55 @@
 """飞书 (Lark) API 封装：认证、多维表格查询、消息发送。"""
 
 import json
+import logging
+import threading
+import time
 
 import requests
 
 from settings import get_settings
 
+logger = logging.getLogger(__name__)
+
+# ── Token 缓存（进程内单例）──────────────────────────────────
+_token_cache: dict[str, tuple[str, float]] = {}  # {cache_key: (token, expire_time)}
+_token_lock = threading.Lock()
+_TOKEN_TTL = 5400  # 缓存 90 分钟（飞书 token 有效期 2 小时，留 30 分钟缓冲）
+
+# 所有 HTTP 请求的默认超时（秒）
+_DEFAULT_TIMEOUT = 30
+
 
 def get_token(app_id=None, app_secret=None):
-    """获取飞书租户访问令牌 (tenant_access_token)。
+    """获取飞书租户访问令牌 (tenant_access_token)，带缓存。
 
     参数可选，默认从 settings 中读取。
     """
     s = get_settings()
     app_id = app_id or s.feishu_app_id
     app_secret = app_secret or s.feishu_app_secret
+    cache_key = f"{app_id}:{app_secret}"
+
+    with _token_lock:
+        cached = _token_cache.get(cache_key)
+        if cached:
+            token, expire_at = cached
+            if time.time() < expire_at:
+                return token
+
+    # 缓存未命中或已过期，重新获取
     resp = requests.post(
         f"{s.feishu_base_url}/open-apis/auth/v3/tenant_access_token/internal",
         json={"app_id": app_id, "app_secret": app_secret},
+        timeout=_DEFAULT_TIMEOUT,
     )
     resp.raise_for_status()
-    return resp.json()["tenant_access_token"]
+    token = resp.json()["tenant_access_token"]
+
+    with _token_lock:
+        _token_cache[cache_key] = (token, time.time() + _TOKEN_TTL)
+    logger.debug("[飞书] 获取新 token 成功")
+    return token
 
 
 def _headers(token):
@@ -45,7 +74,7 @@ def query_bitable(token, app_token, table_id, filter_expr=None):
     params = {"page_size": 100}
     if filter_expr:
         params["filter"] = filter_expr
-    resp = requests.get(url, headers=_headers(token), params=params)
+    resp = requests.get(url, headers=_headers(token), params=params, timeout=_DEFAULT_TIMEOUT)
     resp.raise_for_status()
     return resp.json().get("data", {}).get("items", [])
 
@@ -103,7 +132,7 @@ def download_media(token, url):
 
     直接使用附件元数据中返回的 url 字段（已包含 extra 鉴权参数）。
     """
-    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
     if not resp.ok:
         ct = resp.headers.get("content-type", "")
         body = resp.json() if "json" in ct else {}
@@ -122,9 +151,14 @@ def upload_image(token, image_bytes):
         headers={"Authorization": f"Bearer {token}"},
         data={"image_type": "message"},
         files={"image": ("gift.png", image_bytes, "image/png")},
+        timeout=_DEFAULT_TIMEOUT,
     )
     resp.raise_for_status()
-    return resp.json()["data"]["image_key"]
+    data = resp.json().get("data", {})
+    image_key = data.get("image_key")
+    if not image_key:
+        raise RuntimeError(f"飞书上传图片响应中缺少 image_key: {resp.text[:300]}")
+    return image_key
 
 
 def send_image(token, receive_id, image_key):
@@ -136,7 +170,7 @@ def send_image(token, receive_id, image_key):
         "msg_type": "image",
         "content": json.dumps({"image_key": image_key}),
     }
-    resp = requests.post(url, headers=_headers(token), json=body)
+    resp = requests.post(url, headers=_headers(token), json=body, timeout=_DEFAULT_TIMEOUT)
     resp.raise_for_status()
     return resp.json().get("data", {}).get("message_id", "")
 
@@ -150,7 +184,7 @@ def send_text(token, receive_id, text):
         "msg_type": "text",
         "content": json.dumps({"text": text}),
     }
-    resp = requests.post(url, headers=_headers(token), json=body)
+    resp = requests.post(url, headers=_headers(token), json=body, timeout=_DEFAULT_TIMEOUT)
     resp.raise_for_status()
 
 
@@ -163,6 +197,6 @@ def send_card(token, receive_id, card_content: dict):
         "msg_type": "interactive",
         "content": json.dumps(card_content),
     }
-    resp = requests.post(url, headers=_headers(token), json=body)
+    resp = requests.post(url, headers=_headers(token), json=body, timeout=_DEFAULT_TIMEOUT)
     resp.raise_for_status()
     return resp.json().get("data", {}).get("message_id", "")

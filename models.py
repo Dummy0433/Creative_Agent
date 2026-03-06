@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from defaults import load_defaults
 
@@ -58,10 +58,10 @@ class GenerationDefaults(BaseModel):
     # 图片参数
     image_aspect_ratio: str = "1:1"
     image_size: str = "1K"
-    candidate_count: int = 4
+    candidate_count: int = Field(default=4, ge=1, le=10)
     # 超时（秒）
-    text_timeout: int = 60
-    image_timeout: int = 180
+    text_timeout: int = Field(default=60, ge=1, le=600)
+    image_timeout: int = Field(default=180, ge=1, le=600)
     # 后处理
     enable_postprocess: bool = True
     # CLI / 默认请求参数
@@ -73,6 +73,13 @@ class GenerationDefaults(BaseModel):
     prompt_gen_system_prompt: str | None = None
     # 层级配置（键=层级名 如 "P0"，值=TierProfile）
     tier_profiles: dict[str, TierProfile] = {}
+
+    @field_validator("image_models")
+    @classmethod
+    def image_models_not_empty(cls, v):
+        if not v:
+            raise ValueError("image_models 列表不能为空")
+        return v
 
 
 # ── 三层配置模型 ──────────────────────────────────────────────

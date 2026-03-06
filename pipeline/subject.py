@@ -1,6 +1,9 @@
 """主体分类与校验：根据关键词判断类别，结合档位规则决定是否需要容器包裹。"""
 
+import logging
 import random
+
+logger = logging.getLogger(__name__)
 
 # ── 主体分类关键词 ───────────────────────────────────────────
 # 用于将用户输入的主体归类为「动物」「植物」「地貌」
@@ -68,8 +71,8 @@ def validate_subject(subject: str, tier_rules: dict, region_info: dict) -> str:
         if containers:
             container = random.choice(containers)
             result = f"{subject}{container}"
-            print(f"  >> 主体 '{subject}' (分类: {cats}) 在该档位被禁止")
-            print(f"  >> 已转换为: '{result}' (容器: {container})")
+            logger.info("  >> 主体 '%s' (分类: %s) 在该档位被禁止", subject, cats)
+            logger.info("  >> 已转换为: '%s' (容器: %s)", result, container)
             return result
 
     return subject

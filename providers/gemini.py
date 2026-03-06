@@ -2,11 +2,14 @@
 
 import base64
 import json
+import logging
 
 import requests
 
 from providers.base import ImageProvider, TextProvider
 from settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_json_response(text):
@@ -23,6 +26,23 @@ def _parse_json_response(text):
     return json.loads(text)
 
 
+def _extract_text_from_response(data: dict) -> str:
+    """从 Gemini 响应中安全提取文本内容。
+
+    校验响应结构完整性，缺失时抛出明确异常。
+    """
+    candidates = data.get("candidates")
+    if not candidates:
+        raise RuntimeError(f"Gemini 响应中无 candidates 字段: {json.dumps(data, ensure_ascii=False)[:300]}")
+    content = candidates[0].get("content")
+    if not content or not content.get("parts"):
+        raise RuntimeError(f"Gemini 响应中无 content/parts: {json.dumps(candidates[0], ensure_ascii=False)[:300]}")
+    text = content["parts"][0].get("text")
+    if text is None:
+        raise RuntimeError("Gemini 响应的 parts[0] 中无 text 字段")
+    return text
+
+
 class GeminiTextProvider(TextProvider):
     """基于 Gemini API 的文本生成供应商。"""
 
@@ -34,16 +54,17 @@ class GeminiTextProvider(TextProvider):
 
     def generate(self, model: str, system_prompt: str, user_prompt: str) -> dict:
         """调用 Gemini generateContent 接口，返回结构化 JSON。"""
-        url = f"{self.base_url}/models/{model}:generateContent?key={self.api_key}"
+        url = f"{self.base_url}/models/{model}:generateContent"
+        headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
         body = {
             "system_instruction": {"parts": [{"text": system_prompt}]},
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
             "generationConfig": {"responseMimeType": "application/json"},
         }
-        resp = requests.post(url, json=body, timeout=self.timeout)
+        resp = requests.post(url, headers=headers, json=body, timeout=self.timeout)
         resp.raise_for_status()
-        # 从响应中提取生成的文本
-        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        # 从响应中安全提取生成的文本
+        text = _extract_text_from_response(resp.json())
         return _parse_json_response(text)
 
 
@@ -68,10 +89,12 @@ class GeminiImageProvider(ImageProvider):
 
     def generate(self, prompt: str, reference_images: list[bytes] | None = None) -> bytes:
         """依次尝试候选模型生成图片，返回图片字节数据。"""
+        errors: list[str] = []  # 记录每个模型的失败原因
         for model in self.models:
             try:
-                print(f"  尝试模型: {model}...")
-                url = f"{self.base_url}/models/{model}:generateContent?key={self.api_key}"
+                logger.info("  尝试模型: %s...", model)
+                url = f"{self.base_url}/models/{model}:generateContent"
+                headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
                 # 构建 parts：有参考图时使用多模态输入
                 parts = []
                 if reference_images:
@@ -101,15 +124,23 @@ class GeminiImageProvider(ImageProvider):
                         },
                     },
                 }
-                resp = requests.post(url, json=body, timeout=self.timeout)
+                resp = requests.post(url, headers=headers, json=body, timeout=self.timeout)
                 resp.raise_for_status()
                 data = resp.json()
-                # 遍历响应各部分，查找内联图片数据
-                for part in data["candidates"][0]["content"]["parts"]:
+                # 安全遍历响应各部分，查找内联图片数据
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    logger.warning("  %s 响应中无 candidates", model)
+                    errors.append(f"{model}: 响应中无 candidates")
+                    continue
+                content_parts = candidates[0].get("content", {}).get("parts", [])
+                for part in content_parts:
                     if "inlineData" in part:
                         return base64.b64decode(part["inlineData"]["data"])
-                print(f"  {model} 响应中无图片")
+                logger.warning("  %s 响应中无图片", model)
+                errors.append(f"{model}: 响应中无图片数据")
             except Exception as e:
-                print(f"  {model} 失败: {e}")
+                logger.warning("  %s 失败: %s", model, e)
+                errors.append(f"{model}: {e}")
                 continue
-        raise RuntimeError("所有图片生成模型均失败")
+        raise RuntimeError(f"所有图片生成模型均失败: {'; '.join(errors)}")

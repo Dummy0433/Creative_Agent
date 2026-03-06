@@ -26,8 +26,9 @@ def get_image_provider(name: str | None = None, **kwargs):
     return cls(**kwargs)
 
 
-def get_text_provider(name: str = "gemini", **kwargs):
+def get_text_provider(name: str | None = None, **kwargs):
     """根据名称获取文本供应商实例，透传 kwargs 到构造函数。"""
+    name = name or load_defaults().image_provider  # 与 image_provider 保持一致使用默认值
     cls = _text_providers.get(name)
     if cls is None:
         raise KeyError(f"未知的文本供应商: {name!r}，已注册: {list(_text_providers)}")

@@ -1,5 +1,7 @@
-fastapi
-uvicorn
-pydantic-settings
-pyyaml
-requests
+fastapi>=0.115,<1
+uvicorn>=0.34,<1
+pydantic-settings>=2.7,<3
+pyyaml>=6.0,<7
+requests>=2.32,<3
+Pillow>=11.0,<12
+rembg[cpu]>=2.0,<3
