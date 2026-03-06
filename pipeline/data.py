@@ -67,17 +67,17 @@ def query_routing(token: str, region: str) -> RoutingInfo | None:
     if region in _routing_cache:
         cached, ts = _routing_cache[region]
         if now - ts < _ROUTING_TTL:
-            logger.info("[路由] 缓存命中: 区域=%s", region)
+            logger.debug("[路由] 缓存命中: 区域=%s", region)
             return cached
 
     s = get_settings()
     # TABLE0 地址为空时跳过查询
     if not s.table0_app_token or not s.table0_table_id:
-        logger.info("[路由] TABLE0 地址未配置，跳过路由查询")
+        logger.debug("[路由] TABLE0 地址未配置，跳过路由查询")
         return None
 
     try:
-        logger.info("[路由] 正在查询 TABLE0(路由表) 区域=%s", region)
+        logger.debug("[路由] 正在查询 TABLE0(路由表) 区域=%s", region)
         records = feishu.query_bitable(token, s.table0_app_token, s.table0_table_id)
     except Exception as e:
         logger.warning("[路由] TABLE0 查询失败: %s，将使用 settings 默认地址", e)
@@ -108,7 +108,7 @@ def query_routing(token: str, region: str) -> RoutingInfo | None:
         routing = RoutingInfo(**routing_data)
         # 写入缓存
         _routing_cache[region] = (routing, now)
-        logger.info("[路由] TABLE0 解析成功: 区域=%s", region)
+        logger.debug("[路由] TABLE0 解析成功: 区域=%s", region)
         return routing
 
     logger.warning("[路由] TABLE0 中未找到区域 '%s'，将使用 settings 默认地址", region)
@@ -122,7 +122,7 @@ def resolve_routing(token: str, region: str) -> RoutingInfo:
         return routing
     # Fallback：从 settings 构建默认路由
     s = get_settings()
-    logger.info("[路由] 使用 settings 默认地址作为 fallback")
+    logger.debug("[路由] 使用 settings 默认地址作为 fallback")
     return RoutingInfo(
         region=region,
         archetype_app_token=s.table1_app_token,
@@ -143,7 +143,7 @@ def query_region_info(token: str, region: str, routing: RoutingInfo | None = Non
     else:
         s = get_settings()
         app_token, table_id = s.table1_app_token, s.table1_table_id
-    logger.info("[数据] 正在查询 TABLE1(区域原型) 区域=%s", region)
+    logger.debug("[数据] 正在查询 TABLE1(区域原型) 区域=%s", region)
     records = feishu.query_bitable(token, app_token, table_id)
     if not records:
         raise RuntimeError("TABLE1 为空")
@@ -151,7 +151,7 @@ def query_region_info(token: str, region: str, routing: RoutingInfo | None = Non
     for rec in records:
         data = feishu.parse_record(rec)
         if _match_region(data, region):
-            logger.info("  已找到区域信息: %s", region)
+            logger.debug("  已找到区域信息: %s", region)
             return data
     raise RuntimeError(
         f"在 TABLE1 中未找到区域 '{region}' (已搜索字段: {_REGION_KEYS})"
@@ -168,7 +168,7 @@ def query_tier_rules(token: str, region: str, price: int, routing: RoutingInfo |
     else:
         s = get_settings()
         app_token, table_id = s.table2_app_token, s.table2_table_id
-    logger.info("[数据] 正在查询 TABLE2(档位规则) 区域=%s, 价格=%d", region, price)
+    logger.debug("[数据] 正在查询 TABLE2(档位规则) 区域=%s, 价格=%d", region, price)
     records = feishu.query_bitable(token, app_token, table_id)
 
     candidates = []  # 收集同区域的候选档位（用于错误提示）
@@ -191,7 +191,7 @@ def query_tier_rules(token: str, region: str, price: int, routing: RoutingInfo |
                 if data.get(k):
                     tier = data[k]
                     break
-            logger.info("  匹配到档位 %s (%s), 价格 %d", tier, range_text, price)
+            logger.debug("  匹配到档位 %s (%s), 价格 %d", tier, range_text, price)
             return data
         candidates.append((data.get("价格层级", "?"), range_text))
 
@@ -233,7 +233,7 @@ def query_instances(token: str, region: str, price: int = 0, limit: int = 3,
     else:
         s = get_settings()
         app_token, table_id = s.table3_app_token, s.table3_table_id
-    logger.info("[数据] 正在查询 TABLE3(参考案例) 区域=%s, 价格=%d", region, price)
+    logger.debug("[数据] 正在查询 TABLE3(参考案例) 区域=%s, 价格=%d", region, price)
     records = feishu.query_bitable(token, app_token, table_id)
     all_parsed = [feishu.parse_record(rec) for rec in records]
 
@@ -244,23 +244,23 @@ def query_instances(token: str, region: str, price: int = 0, limit: int = 3,
 
     if has_region_field:
         matched = [d for d in all_parsed if _match_region(d, region)]
-        logger.info("  按区域筛选: %d/%d 条记录", len(matched), len(all_parsed))
+        logger.debug("  按区域筛选: %d/%d 条记录", len(matched), len(all_parsed))
     else:
         matched = all_parsed
-        logger.info("  TABLE3 无区域字段, 使用全部 %d 条记录", len(matched))
+        logger.debug("  TABLE3 无区域字段, 使用全部 %d 条记录", len(matched))
 
     # 按价格档位筛选
     if price > 0:
         price_matched = [d for d in matched if _match_price_tier_instance(d, price)]
         if price_matched:
-            logger.info("  按价格档位筛选: %d/%d 条记录", len(price_matched), len(matched))
+            logger.debug("  按价格档位筛选: %d/%d 条记录", len(price_matched), len(matched))
             matched = price_matched
         else:
-            logger.info("  无价格档位匹配, fallback 到全部 %d 条记录", len(matched))
+            logger.debug("  无价格档位匹配, fallback 到全部 %d 条记录", len(matched))
 
     random.shuffle(matched)
     instances = matched[:limit]
-    logger.info("  返回 %d 条案例", len(instances))
+    logger.debug("  返回 %d 条案例", len(instances))
     return instances
 
 

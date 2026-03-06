@@ -1,15 +1,16 @@
 """飞书机器人长连接 (WebSocket) 客户端。
 
 启动方式:
-    python bot_ws.py          # 正常启动
-    python bot_ws.py --card   # 先发送 mock 候选卡片，再启动 WS 监听回调
+    python bot_ws.py                # 正常启动（INFO 级别日志）
+    python bot_ws.py --card         # 先发送 mock 候选卡片，再启动 WS 监听
+    python bot_ws.py --test         # 全部 DEBUG 日志
+    python bot_ws.py --test card    # 仅卡片交互 DEBUG 日志
+    python bot_ws.py --test route   # 仅路由/数据查询 DEBUG 日志
+    python bot_ws.py --test generate # 仅生成流程 DEBUG 日志
+    python bot_ws.py --test post    # 仅后处理 DEBUG 日志
+    python bot_ws.py --test card route  # 多个子系统组合
 
 接收飞书消息，处理菜单点击和卡片交互，触发生成 Pipeline 并回传结果。
-
-文本模式消息格式示例（仍然支持）：
-    雄狮 1 MENA
-    玫瑰 100
-    雪山
 """
 
 import json
@@ -35,10 +36,23 @@ from pipeline import generate_candidates, finalize_selected
 from pipeline.candidate_store import get as get_candidate
 from settings import get_settings
 
-logger = logging.getLogger(__name__)
+# 使用固定名称，避免 __main__ vs bot_ws 不一致
+logger = logging.getLogger("bot_ws")
 
 # 线程池：用于异步执行生成任务，避免阻塞事件循环
 _generate_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gen")
+
+# ── 日志子系统映射 ─────────────────────────────────────────────
+# --test <subsystem> 时只显示对应模块的 DEBUG 日志，其余保持 WARNING
+_LOG_SUBSYSTEMS = {
+    "route":    ["pipeline.data"],                                        # 路由 + 数据查询
+    "generate": ["pipeline.orchestrator", "pipeline.context",             # 生成流程
+                 "pipeline.subject", "pipeline.tier_profile",
+                 "providers", "providers.gemini"],
+    "post":     ["pipeline.postprocess"],                                 # 后处理
+    "card":     ["bot_ws", "cards"],                                      # 卡片交互
+    "feishu":   ["feishu"],                                               # 飞书 API
+}
 
 
 # ── 辅助函数 ─────────────────────────────────────────────────
@@ -193,13 +207,24 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
         action = event.action
         action_value = action.value
 
-        if isinstance(action_value, dict):
-            act = action_value.get("action")
+        # 兼容处理：SDK 可能返回 dict 或 JSON 字符串或 None
+        if action_value is None:
+            action_value = {}
+        if isinstance(action_value, str):
+            try:
+                action_value = json.loads(action_value)
+            except (json.JSONDecodeError, TypeError):
+                action_value = {}
+
+        logger.info("[卡片] action_value=%s, type=%s", action_value, type(action_value))
+
+        if isinstance(action_value, dict) and action_value.get("action"):
+            act = action_value["action"]
             rid = action_value.get("request_id", "")
 
             # ── 选择候选图 (A/B/C/D) → Phase 2 ──
             if act == "candidate_select":
-                idx = action_value["selected_index"]
+                idx = int(action_value["selected_index"])
                 logger.info("[卡片] 用户=%s 选择候选图: request_id=%s, index=%d", open_id, rid, idx)
                 _generate_pool.submit(handle_finalize, open_id, rid, idx)
                 return _make_toast(f"已选择方案 {chr(65 + idx)}，正在处理...")
@@ -209,9 +234,12 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
                 logger.info("[卡片] 用户=%s 请求重新生成: request_id=%s", open_id, rid)
                 candidate = get_candidate(rid)
                 if candidate and candidate.config:
+                    logger.info("[卡片] 找到候选数据，原始配置: subject=%s, region=%s, price=%d",
+                                candidate.config.subject, candidate.config.region, candidate.config.price)
                     _generate_pool.submit(handle_generate, open_id, candidate.config)
                     return _make_toast("正在重新生成，请稍候...")
                 else:
+                    logger.warning("[卡片] 候选数据不存在或无配置: candidate=%s", candidate is not None)
                     return _make_toast("候选图已过期，请重新提交请求", "warning")
 
             # ── Modify Request → 发回生成表单 ──
@@ -221,8 +249,13 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
                 feishu.send_card(token, open_id, GENERATE_FORM_CARD)
                 return _make_toast("请在新卡片中修改参数")
 
+            # 未知 action
+            logger.warning("[卡片] 未知 action: %s, action_value=%s", act, action_value)
+            return P2CardActionTriggerResponse()
+
         # ── 生成表单提交 ──
         form_value = action.form_value or {}
+        logger.info("[卡片] form_value=%s (action_value 未匹配到已知 action)", form_value)
         if form_value:
             logger.info("[卡片] 用户=%s, 表单=%s", open_id, form_value)
 
@@ -255,16 +288,60 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
 
 # ── 主入口 ───────────────────────────────────────────────────
 
+def _configure_logging(test_subsystems: list[str] | None, base_level: str) -> None:
+    """配置日志级别。
+
+    test_subsystems=None:  正常模式，所有 logger 使用 base_level
+    test_subsystems=[]:    --test 无参数，全部 DEBUG
+    test_subsystems=[...]: --test route card，指定子系统 DEBUG，其余 WARNING
+    """
+    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+    if test_subsystems is None:
+        # 正常模式
+        logging.basicConfig(level=getattr(logging, base_level.upper(), logging.INFO), format=fmt)
+        return
+
+    if not test_subsystems:
+        # --test 无参数：全部 DEBUG
+        logging.basicConfig(level=logging.DEBUG, format=fmt)
+        return
+
+    # --test route card：指定子系统 DEBUG，其余 WARNING
+    logging.basicConfig(level=logging.WARNING, format=fmt)
+    # 静默 Lark SDK 的 ping/pong 等噪音日志
+    logging.getLogger("Lark").setLevel(logging.WARNING)
+    valid_subs = []
+    for sub in test_subsystems:
+        if sub not in _LOG_SUBSYSTEMS:
+            print(f"  未知子系统: '{sub}'. 可选: {', '.join(_LOG_SUBSYSTEMS)}")
+            continue
+        valid_subs.append(sub)
+        for logger_name in _LOG_SUBSYSTEMS[sub]:
+            logging.getLogger(logger_name).setLevel(logging.DEBUG)
+
+    if valid_subs:
+        print(f"  日志过滤: 仅显示 {', '.join(valid_subs)} 的 DEBUG 日志")
+
+
 def main():
     """启动飞书 WebSocket 长连接机器人。"""
     import sys
 
     s = get_settings()
 
-    logging.basicConfig(
-        level=getattr(logging, s.log_level.upper(), logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    # 解析 --test [subsystem...] 参数
+    test_subsystems = None  # None = 未使用 --test
+    if "--test" in sys.argv:
+        test_idx = sys.argv.index("--test")
+        # 收集 --test 后面的子系统名称（直到下一个 --xxx 参数或末尾）
+        test_subsystems = []
+        for arg in sys.argv[test_idx + 1:]:
+            if arg.startswith("--"):
+                break
+            test_subsystems.append(arg)
+
+    _configure_logging(test_subsystems, s.log_level)
 
     # --card: 发送 mock 卡片后继续启动 WS 监听回调
     if "--card" in sys.argv:
@@ -284,11 +361,16 @@ def main():
         .build()
     )
 
+    # Lark SDK 日志级别：仅 --test（无参数）时显示 DEBUG，其余情况只显示 INFO
+    # --test card route 等子系统过滤模式下也静默 SDK 噪音
+    sdk_log_level = (lark.LogLevel.DEBUG
+                     if test_subsystems is not None and len(test_subsystems) == 0
+                     else lark.LogLevel.INFO)
     cli = lark.ws.Client(
         s.feishu_app_id,
         s.feishu_app_secret,
         event_handler=event_handler,
-        log_level=lark.LogLevel.DEBUG,
+        log_level=sdk_log_level,
     )
 
     logger.info("飞书礼物机器人已就绪!")

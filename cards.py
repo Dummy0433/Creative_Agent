@@ -30,7 +30,7 @@ GENERATE_FORM_CARD = {
                     "tag": "select_static",
                     "placeholder": {"tag": "plain_text", "content": "Select region"},
                     "name": "region",
-                    "initial_option": "General",
+                    "initial_option": "MENA",
                     "options": [
                         {"text": {"tag": "plain_text", "content": "MENA"}, "value": "MENA"},
                         {"text": {"tag": "plain_text", "content": "TR"}, "value": "TR"},
