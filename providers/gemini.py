@@ -1,10 +1,10 @@
-"""Gemini 供应商实现：图片生成和文本生成。"""
+"""Gemini 供应商实现：图片生成和文本生成（async）。"""
 
 import base64
 import json
 import logging
 
-import requests
+import httpx
 
 from providers.base import ImageProvider, TextProvider
 from settings import get_settings
@@ -52,7 +52,7 @@ class GeminiTextProvider(TextProvider):
         self.base_url = s.gemini_base_url
         self.timeout = timeout if timeout is not None else 60
 
-    def generate(self, model: str, system_prompt: str, user_prompt: str) -> dict:
+    async def generate(self, model: str, system_prompt: str, user_prompt: str) -> dict:
         """调用 Gemini generateContent 接口，返回结构化 JSON。"""
         url = f"{self.base_url}/models/{model}:generateContent"
         headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
@@ -61,9 +61,9 @@ class GeminiTextProvider(TextProvider):
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
             "generationConfig": {"responseMimeType": "application/json"},
         }
-        resp = requests.post(url, headers=headers, json=body, timeout=self.timeout)
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(url, headers=headers, json=body)
         resp.raise_for_status()
-        # 从响应中安全提取生成的文本
         text = _extract_text_from_response(resp.json())
         return _parse_json_response(text)
 
@@ -87,7 +87,7 @@ class GeminiImageProvider(ImageProvider):
         self.aspect_ratio = aspect_ratio or d.image_aspect_ratio
         self.image_size = image_size or d.image_size
 
-    def generate(self, prompt: str, reference_images: list[bytes] | None = None) -> bytes:
+    async def generate(self, prompt: str, reference_images: list[bytes] | None = None) -> bytes:
         """依次尝试候选模型生成图片，返回图片字节数据。"""
         errors: list[str] = []  # 记录每个模型的失败原因
         for model in self.models:
@@ -113,18 +113,17 @@ class GeminiImageProvider(ImageProvider):
                     "contents": [{"parts": parts}],
                     "generationConfig": {
                         "responseModalities": ["TEXT", "IMAGE"],
-                        # 图片尺寸配置
                         "imageConfig": {
                             "aspectRatio": self.aspect_ratio,
                             "imageSize": self.image_size,
                         },
-                        # 启用深度思考模式，模型会推理复杂 prompt 后再生成终稿
                         "thinkingConfig": {
                             "thinkingLevel": "High",
                         },
                     },
                 }
-                resp = requests.post(url, headers=headers, json=body, timeout=self.timeout)
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    resp = await client.post(url, headers=headers, json=body)
                 resp.raise_for_status()
                 data = resp.json()
                 # 安全遍历响应各部分，查找内联图片数据

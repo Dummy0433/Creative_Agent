@@ -1,7 +1,8 @@
-"""多维表格查询：路由表、区域信息、档位规则、参考案例。"""
+"""多维表格查询：路由表、区域信息、档位规则、参考案例（async）。"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import re
@@ -57,7 +58,7 @@ def _parse_price_range(text: str) -> tuple[int, int]:
 
 # ── 查询函数 ────────────────────────────────────────────────
 
-def query_routing(token: str, region: str) -> RoutingInfo | None:
+async def query_routing(token: str, region: str) -> RoutingInfo | None:
     """查询 TABLE0（路由表），返回该区域对应的各表格物理地址。
 
     结果缓存 10 分钟。查询失败或未找到区域时返回 None。
@@ -78,7 +79,7 @@ def query_routing(token: str, region: str) -> RoutingInfo | None:
 
     try:
         logger.debug("[路由] 正在查询 TABLE0(路由表) 区域=%s", region)
-        records = feishu.query_bitable(token, s.table0_app_token, s.table0_table_id)
+        records = await feishu.query_bitable(token, s.table0_app_token, s.table0_table_id)
     except Exception as e:
         logger.warning("[路由] TABLE0 查询失败: %s，将使用 settings 默认地址", e)
         return None
@@ -115,9 +116,9 @@ def query_routing(token: str, region: str) -> RoutingInfo | None:
     return None
 
 
-def resolve_routing(token: str, region: str) -> RoutingInfo:
+async def resolve_routing(token: str, region: str) -> RoutingInfo:
     """解析路由信息：TABLE0 查询 + settings fallback，保证始终返回有效值。"""
-    routing = query_routing(token, region)
+    routing = await query_routing(token, region)
     if routing:
         return routing
     # Fallback：从 settings 构建默认路由
@@ -136,7 +137,7 @@ def resolve_routing(token: str, region: str) -> RoutingInfo:
 
 # ── 查询函数 ────────────────────────────────────────────────
 
-def query_region_info(token: str, region: str, routing: RoutingInfo | None = None) -> dict:
+async def query_region_info(token: str, region: str, routing: RoutingInfo | None = None) -> dict:
     """查询 TABLE1（区域原型），返回该区域的设计风格、特色物件等信息。"""
     if routing:
         app_token, table_id = routing.archetype_app_token, routing.archetype_table_id
@@ -144,7 +145,7 @@ def query_region_info(token: str, region: str, routing: RoutingInfo | None = Non
         s = get_settings()
         app_token, table_id = s.table1_app_token, s.table1_table_id
     logger.debug("[数据] 正在查询 TABLE1(区域原型) 区域=%s", region)
-    records = feishu.query_bitable(token, app_token, table_id)
+    records = await feishu.query_bitable(token, app_token, table_id)
     if not records:
         raise RuntimeError("TABLE1 为空")
     # 遍历记录，匹配区域
@@ -158,32 +159,26 @@ def query_region_info(token: str, region: str, routing: RoutingInfo | None = Non
     )
 
 
-def query_tier_rules(token: str, region: str, price: int, routing: RoutingInfo | None = None) -> dict:
-    """查询 TABLE2（档位规则），根据区域和价格匹配对应档位。
-
-    匹配逻辑：先按区域筛选，再判断价格是否落在「价格区间」内。
-    """
+async def query_tier_rules(token: str, region: str, price: int, routing: RoutingInfo | None = None) -> dict:
+    """查询 TABLE2（档位规则），根据区域和价格匹配对应档位。"""
     if routing:
         app_token, table_id = routing.rules_app_token, routing.rules_table_id
     else:
         s = get_settings()
         app_token, table_id = s.table2_app_token, s.table2_table_id
     logger.debug("[数据] 正在查询 TABLE2(档位规则) 区域=%s, 价格=%d", region, price)
-    records = feishu.query_bitable(token, app_token, table_id)
+    records = await feishu.query_bitable(token, app_token, table_id)
 
-    candidates = []  # 收集同区域的候选档位（用于错误提示）
+    candidates = []
     for rec in records:
         data = feishu.parse_record(rec)
-        # 先匹配区域
         if not _match_region(data, region):
             continue
-        # 从多个可能的字段名中提取价格区间文本
         range_text = ""
         for k in _PRICE_RANGE_KEYS:
             if data.get(k):
                 range_text = data[k]
                 break
-        # 解析价格区间并判断是否匹配
         lo, hi = _parse_price_range(range_text)
         if lo <= price <= hi:
             tier = ""
@@ -195,7 +190,6 @@ def query_tier_rules(token: str, region: str, price: int, routing: RoutingInfo |
             return data
         candidates.append((data.get("价格层级", "?"), range_text))
 
-    # 未匹配到任何档位，抛出错误并列出可用档位
     available = ", ".join(f"{t}({r})" for t, r in candidates)
     raise RuntimeError(
         f"未找到匹配的档位规则: 区域='{region}' 价格={price}. "
@@ -204,11 +198,7 @@ def query_tier_rules(token: str, region: str, price: int, routing: RoutingInfo |
 
 
 def _match_price_tier_instance(data: dict, price: int) -> bool:
-    """检查参考案例记录的价格档位是否与给定价格匹配。
-
-    尝试从价格区间字段和档位字段中提取区间文本，判断 price 是否落入。
-    TABLE3 的「价格层级」字段值可能是 "1-19 coins" 这样的区间文本。
-    """
+    """检查参考案例记录的价格档位是否与给定价格匹配。"""
     for k in (*_PRICE_RANGE_KEYS, *_TIER_KEYS):
         range_text = data.get(k, "")
         if isinstance(range_text, str) and range_text:
@@ -218,26 +208,18 @@ def _match_price_tier_instance(data: dict, price: int) -> bool:
     return False
 
 
-def query_instances(token: str, region: str, price: int = 0, limit: int = 3,
-                    routing: RoutingInfo | None = None) -> list[dict]:
-    """查询 TABLE3（参考案例），按区域和价格档位筛选后随机返回指定数量的案例。
-
-    筛选逻辑：
-    1. 按区域筛选（如有区域字段）
-    2. 按价格档位筛选（如 price > 0）
-    3. 无价格匹配时 fallback 到区域匹配结果
-    4. 随机 shuffle 后取前 limit 条
-    """
+async def query_instances(token: str, region: str, price: int = 0, limit: int = 3,
+                          routing: RoutingInfo | None = None) -> list[dict]:
+    """查询 TABLE3（参考案例），按区域和价格档位筛选后随机返回指定数量的案例。"""
     if routing:
         app_token, table_id = routing.instance_app_token, routing.instance_table_id
     else:
         s = get_settings()
         app_token, table_id = s.table3_app_token, s.table3_table_id
     logger.debug("[数据] 正在查询 TABLE3(参考案例) 区域=%s, 价格=%d", region, price)
-    records = feishu.query_bitable(token, app_token, table_id)
+    records = await feishu.query_bitable(token, app_token, table_id)
     all_parsed = [feishu.parse_record(rec) for rec in records]
 
-    # 检查是否有任何记录包含区域字段
     has_region_field = any(
         any(data.get(k) for k in _REGION_KEYS) for data in all_parsed
     )
@@ -249,7 +231,6 @@ def query_instances(token: str, region: str, price: int = 0, limit: int = 3,
         matched = all_parsed
         logger.debug("  TABLE3 无区域字段, 使用全部 %d 条记录", len(matched))
 
-    # 按价格档位筛选
     if price > 0:
         price_matched = [d for d in matched if _match_price_tier_instance(d, price)]
         if price_matched:
@@ -264,22 +245,20 @@ def query_instances(token: str, region: str, price: int = 0, limit: int = 3,
     return instances
 
 
-def download_instance_images(token: str, instances: list[dict]) -> list[bytes]:
-    """下载实例的图标附件图片，返回图片字节列表。
-
-    直接使用附件元数据中的 url 字段下载，下载失败的跳过。
-    """
-    images = []
-    for inst in instances:
+async def download_instance_images(token: str, instances: list[dict]) -> list[bytes]:
+    """并行下载实例的图标附件图片，返回图片字节列表。"""
+    async def _download_one(inst: dict) -> bytes | None:
         attachments = inst.get("图标")
         if not isinstance(attachments, list) or not attachments:
-            continue
+            return None
         download_url = attachments[0].get("url", "")
         if not download_url:
-            continue
+            return None
         try:
-            img_bytes = feishu.download_media(token, download_url)
-            images.append(img_bytes)
+            return await feishu.download_media(token, download_url)
         except Exception as e:
             logger.warning("  下载实例图片失败 (%s): %s", download_url, e)
-    return images
+            return None
+
+    results = await asyncio.gather(*[_download_one(inst) for inst in instances])
+    return [img for img in results if img is not None]

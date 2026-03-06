@@ -32,8 +32,8 @@ _GIFT_ICON_SIZE = 112            # Mask 56×56 @1x → 112 @2x
 
 # Figma @1x 垂直间距 → @2x
 # name Top=76 in unit, unit Top=88, icon bottom @1x=158 → gap=164-158=6 @1x=12 @2x
-_MASK_BOTTOM_TO_NAME = 12        # mask 底 → 名字顶 @2x (Figma: 6px @1x)
-_NAME_TO_PRICE_GAP = 4           # 名字底 → 价格顶 @2x (估算 ~2px @1x)
+_MASK_BOTTOM_TO_NAME = 16        # mask 底 → 名字顶 @2x (Figma: 6px @1x + 手动下移 2px@1x)
+_NAME_TO_PRICE_GAP = 0           # 名字底 → 价格顶 @2x (名字下移后补偿，保持价格原位)
 
 # Figma Typography @1x → @2x
 # font: "TikTok Text", 9px, weight 500, line-height 130%, letter-spacing 2.29%

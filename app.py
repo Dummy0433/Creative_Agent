@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from defaults import load_defaults
 from models import GenerateRequest, GenerateResponse, GenerationConfig
-from pipeline import generate
+from pipeline import generate, generate_async
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,9 +19,9 @@ app = FastAPI(title="Gift Service")
 
 
 @app.post("/generate", response_model=GenerateResponse)
-def generate_endpoint(req: GenerateRequest):
+async def generate_endpoint(req: GenerateRequest):
     """生成接口：接收 region / subject / price（+ 可选高级参数），返回生成结果。"""
-    result = generate(req.to_config())
+    result = await generate_async(req.to_config())
     return result
 
 

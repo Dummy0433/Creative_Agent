@@ -7,7 +7,7 @@ class ImageProvider(ABC):
     """图片生成供应商抽象基类。"""
 
     @abstractmethod
-    def generate(self, prompt: str, reference_images: list[bytes] | None = None) -> bytes:
+    async def generate(self, prompt: str, reference_images: list[bytes] | None = None) -> bytes:
         """根据提示词生成图片，返回图片字节数据。
 
         Args:
@@ -21,6 +21,6 @@ class TextProvider(ABC):
     """文本生成供应商抽象基类。"""
 
     @abstractmethod
-    def generate(self, model: str, system_prompt: str, user_prompt: str) -> dict:
+    async def generate(self, model: str, system_prompt: str, user_prompt: str) -> dict:
         """根据系统提示和用户输入生成结构化 JSON 响应。"""
         ...
