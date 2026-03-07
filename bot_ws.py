@@ -261,6 +261,10 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
             except Exception as e:
                 logger.error("[Calendar] 拉取失败: %s", e, exc_info=True)
                 feishu.send_text_sync(token, open_id, f"Calendar 拉取失败: {e}")
+        elif event_key == "request":
+            from cards import REQUEST_FORM_CARD
+            token = feishu.get_token_sync()
+            feishu.send_card_sync(token, open_id, REQUEST_FORM_CARD)
         elif event_key == "inspire":
             token = feishu.get_token_sync()
             feishu.send_text_sync(token, open_id, "灵感模式即将上线!")
@@ -383,32 +387,47 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
             logger.warning("[卡片] 未知 action: %s, action_value=%s", act, action_value)
             return P2CardActionTriggerResponse()
 
-        # ── 生成表单提交 ──
+        # ── 表单提交路由 ──
         form_value = action.form_value or {}
         logger.info("[卡片] form_value=%s (action_value 未匹配到已知 action)", form_value)
         if form_value:
-            logger.info("[卡片] 用户=%s, 表单=%s", open_id, form_value)
+            # 判断是哪个表单
+            if "gift_name" in form_value:
+                # ── Request 表单提交 ──
+                from pipeline.request import submit_request
+                logger.info("[卡片] Request 表单: user=%s, form=%s", open_id, form_value)
+                try:
+                    record_id = submit_request(form_data=form_value, submitter_open_id=open_id)
+                    return _make_toast(f"需求已提交! (record: {record_id})", "success")
+                except ValueError as e:
+                    return _make_toast(str(e), "error")
+                except Exception as e:
+                    logger.error("[Request] 提交失败: %s", e, exc_info=True)
+                    return _make_toast(f"提交失败: {e}", "error")
+            else:
+                # ── 生成表单提交（原有逻辑保持不变）──
+                logger.info("[卡片] 用户=%s, 表单=%s", open_id, form_value)
 
-            d = load_defaults()
-            region = form_value.get("region", d.default_region)
-            price_str = form_value.get("price", str(d.default_price))
-            subject = form_value.get("object", "").strip() or d.default_subject
+                d = load_defaults()
+                region = form_value.get("region", d.default_region)
+                price_str = form_value.get("price", str(d.default_price))
+                subject = form_value.get("object", "").strip() or d.default_subject
 
-            try:
-                price = int(price_str)
-            except (ValueError, TypeError):
-                price = d.default_price
+                try:
+                    price = int(price_str)
+                except (ValueError, TypeError):
+                    price = d.default_price
 
-            config = GenerationConfig(
-                region=region,
-                subject=subject,
-                price=price,
-                image_aspect_ratio=form_value.get("aspect_ratio"),
-                image_size=form_value.get("image_size"),
-            )
+                config = GenerationConfig(
+                    region=region,
+                    subject=subject,
+                    price=price,
+                    image_aspect_ratio=form_value.get("aspect_ratio"),
+                    image_size=form_value.get("image_size"),
+                )
 
-            _generate_pool.submit(handle_generate, open_id, config)
-            return _make_toast(f"正在生成: {subject} | {price} coins | {region}...")
+                _generate_pool.submit(handle_generate, open_id, config)
+                return _make_toast(f"正在生成: {subject} | {price} coins | {region}...")
 
         return P2CardActionTriggerResponse()
     except Exception as e:
