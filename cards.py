@@ -94,6 +94,110 @@ GENERATE_FORM_CARD = {
 }
 
 
+# ── 需求提单表单卡片（静态）──────────────────────────────────────
+
+REQUEST_FORM_CARD = {
+    "header": {
+        "title": {"tag": "plain_text", "content": "Gift Request"},
+        "template": "purple",
+    },
+    "elements": [
+        {
+            "tag": "form",
+            "name": "request_form",
+            "elements": [
+                {
+                    "tag": "input",
+                    "name": "gift_name",
+                    "placeholder": {"tag": "plain_text", "content": "Gift name"},
+                    "label": {"tag": "plain_text", "content": "Gift Name *"},
+                },
+                {
+                    "tag": "input",
+                    "name": "price",
+                    "placeholder": {"tag": "plain_text", "content": "Price in coins"},
+                    "label": {"tag": "plain_text", "content": "Price (coins) *"},
+                },
+                {
+                    "tag": "select_static",
+                    "placeholder": {"tag": "plain_text", "content": "Select gift type"},
+                    "name": "gift_type",
+                    "options": [
+                        {"text": {"tag": "plain_text", "content": "Banner"}, "value": "Banner"},
+                        {"text": {"tag": "plain_text", "content": "Animation"}, "value": "Animation"},
+                        {"text": {"tag": "plain_text", "content": "Random"}, "value": "Random"},
+                        {"text": {"tag": "plain_text", "content": "Face"}, "value": "Face"},
+                    ],
+                },
+                {
+                    "tag": "select_static",
+                    "placeholder": {"tag": "plain_text", "content": "Select category"},
+                    "name": "categories",
+                    "options": [
+                        {"text": {"tag": "plain_text", "content": "Regular Gifts"}, "value": "Regular Gifts // \u5e38\u89c4\u793c\u7269"},
+                        {"text": {"tag": "plain_text", "content": "Campaign Gifts"}, "value": "Campaign Gifts // \u6d3b\u52a8\u793c\u7269"},
+                        {"text": {"tag": "plain_text", "content": "IP Partnership"}, "value": "IP Partnership // \u77e5\u8bc6\u4ea7\u6743\u5408\u4f5c\u4f19\u4f34\u5173\u7cfb"},
+                        {"text": {"tag": "plain_text", "content": "Non-Gifts"}, "value": "Non-Gifts // \u975e\u793c\u7269\u9700\u6c42"},
+                        {"text": {"tag": "plain_text", "content": "LIVE Effects"}, "value": "LIVE Effects // \u5f00\u64ad\u7279\u6548"},
+                        {"text": {"tag": "plain_text", "content": "Stickers"}, "value": "Stickers // \u8d34\u7eb8"},
+                        {"text": {"tag": "plain_text", "content": "Interactive Gift"}, "value": "Interactive Gift // \u4e92\u52a8\u793c\u7269"},
+                    ],
+                },
+                {
+                    "tag": "select_static",
+                    "placeholder": {"tag": "plain_text", "content": "Select region"},
+                    "name": "region",
+                    "options": [
+                        {"text": {"tag": "plain_text", "content": "US"}, "value": "US"},
+                        {"text": {"tag": "plain_text", "content": "MENA"}, "value": "MENA"},
+                        {"text": {"tag": "plain_text", "content": "EU"}, "value": "EU"},
+                        {"text": {"tag": "plain_text", "content": "JP"}, "value": "JP"},
+                        {"text": {"tag": "plain_text", "content": "KR"}, "value": "KR"},
+                        {"text": {"tag": "plain_text", "content": "TW"}, "value": "TW"},
+                        {"text": {"tag": "plain_text", "content": "TR"}, "value": "TR"},
+                        {"text": {"tag": "plain_text", "content": "ID"}, "value": "ID"},
+                        {"text": {"tag": "plain_text", "content": "VN"}, "value": "VN"},
+                        {"text": {"tag": "plain_text", "content": "TH"}, "value": "TH"},
+                        {"text": {"tag": "plain_text", "content": "BR"}, "value": "BR"},
+                        {"text": {"tag": "plain_text", "content": "LATAM"}, "value": "LATAM"},
+                        {"text": {"tag": "plain_text", "content": "Global Gift"}, "value": "Global Gift"},
+                        {"text": {"tag": "plain_text", "content": "Cross-Region"}, "value": "Cross-Region"},
+                        {"text": {"tag": "plain_text", "content": "SG"}, "value": "SG"},
+                        {"text": {"tag": "plain_text", "content": "MY"}, "value": "MY"},
+                        {"text": {"tag": "plain_text", "content": "PH"}, "value": "PH"},
+                        {"text": {"tag": "plain_text", "content": "ANZ"}, "value": "ANZ"},
+                        {"text": {"tag": "plain_text", "content": "CCA"}, "value": "CCA"},
+                        {"text": {"tag": "plain_text", "content": "RO"}, "value": "RO"},
+                        {"text": {"tag": "plain_text", "content": "KW"}, "value": "KW"},
+                        {"text": {"tag": "plain_text", "content": "SA"}, "value": "SA"},
+                    ],
+                },
+                {
+                    "tag": "input",
+                    "name": "deadline",
+                    "placeholder": {"tag": "plain_text", "content": "YYYY-MM-DD"},
+                    "label": {"tag": "plain_text", "content": "Expected Delivery Date *"},
+                },
+                {"tag": "hr"},
+                {
+                    "tag": "input",
+                    "name": "prd",
+                    "placeholder": {"tag": "plain_text", "content": "Link to PRD (optional)"},
+                    "label": {"tag": "plain_text", "content": "Activity PRD"},
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "Submit Request"},
+                    "type": "primary",
+                    "action_type": "form_submit",
+                    "name": "request_submit",
+                },
+            ],
+        },
+    ],
+}
+
+
 # ── 候选图选择卡片（动态）────────────────────────────────────
 
 def build_candidate_card(candidate: CandidateResult) -> dict:
