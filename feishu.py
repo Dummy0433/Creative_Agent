@@ -401,6 +401,27 @@ def send_card_sync(token, receive_id, card_content):
     return resp.json().get("data", {}).get("message_id", "")
 
 
+def update_card_sync(token, message_id, card_content):
+    """通过 PATCH 更新已发送的卡片消息内容。"""
+    base = get_settings().feishu_base_url
+    url = f"{base}/open-apis/im/v1/messages/{message_id}"
+    body = {"content": json.dumps(card_content)}
+    with _sync_client() as client:
+        resp = client.patch(url, headers=_headers(token), json=body)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def delete_message_sync(token, message_id):
+    """删除指定消息。"""
+    base = get_settings().feishu_base_url
+    url = f"{base}/open-apis/im/v1/messages/{message_id}"
+    with _sync_client() as client:
+        resp = client.delete(url, headers=_headers(token))
+    resp.raise_for_status()
+    return resp.json()
+
+
 def create_bitable_record_sync(token, app_token, table_id, fields: dict):
     """在多维表格中创建一条记录（sync），返回 record_id。"""
     base = get_settings().feishu_base_url

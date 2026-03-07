@@ -97,6 +97,7 @@ GENERATE_FORM_CARD = {
 # ── 需求提单表单卡片（静态）──────────────────────────────────────
 
 REQUEST_FORM_CARD = {
+    "config": {"update_multi": True},
     "header": {
         "title": {"tag": "plain_text", "content": "Gift Request"},
         "template": "purple",
@@ -115,7 +116,7 @@ REQUEST_FORM_CARD = {
                 {
                     "tag": "input",
                     "name": "price",
-                    "placeholder": {"tag": "plain_text", "content": "Price in coins"},
+                    "placeholder": {"tag": "plain_text", "content": "Enter number only"},
                     "label": {"tag": "plain_text", "content": "Price (coins) *"},
                 },
                 {
@@ -173,9 +174,9 @@ REQUEST_FORM_CARD = {
                     ],
                 },
                 {
-                    "tag": "input",
+                    "tag": "date_picker",
                     "name": "deadline",
-                    "placeholder": {"tag": "plain_text", "content": "YYYY-MM-DD"},
+                    "placeholder": {"tag": "plain_text", "content": "Select date"},
                     "label": {"tag": "plain_text", "content": "Expected Delivery Date *"},
                 },
                 {"tag": "hr"},

@@ -73,7 +73,7 @@ def test_submit_bad_date_format():
     """日期格式错误应失败。"""
     import pytest
     from pipeline.request import submit_request
-    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+    with pytest.raises(ValueError, match="日期格式错误"):
         submit_request({"gift_name": "Test", "price": "100", "deadline": "12/31/2099"}, "ou_test")
 
 

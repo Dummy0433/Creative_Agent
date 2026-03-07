@@ -27,6 +27,7 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
     P2CardActionTrigger,
     P2CardActionTriggerResponse,
     CallBackToast,
+    CallBackCard,
 )
 
 import feishu
@@ -41,6 +42,9 @@ from settings import get_settings
 
 # 使用固定名称，避免 __main__ vs bot_ws 不一致
 logger = logging.getLogger("bot_ws")
+
+# Request 表单防重复提交（message_id 集合）
+_submitted_request_cards: set[str] = set()
 
 
 def _run_async(coro):
@@ -261,7 +265,7 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
             except Exception as e:
                 logger.error("[Calendar] 拉取失败: %s", e, exc_info=True)
                 feishu.send_text_sync(token, open_id, f"Calendar 拉取失败: {e}")
-        elif event_key == "request":
+        elif event_key == "new_request":
             from cards import REQUEST_FORM_CARD
             token = feishu.get_token_sync()
             feishu.send_card_sync(token, open_id, REQUEST_FORM_CARD)
@@ -395,14 +399,49 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
             if "gift_name" in form_value:
                 # ── Request 表单提交 ──
                 from pipeline.request import submit_request
+                msg_id = event.context.open_message_id if event.context else None
+
+                # 防重复提交
+                if msg_id and msg_id in _submitted_request_cards:
+                    return _make_toast("该表单已提交，请勿重复操作", "warning")
+
                 logger.info("[卡片] Request 表单: user=%s, form=%s", open_id, form_value)
                 try:
                     record_id = submit_request(form_data=form_value, submitter_open_id=open_id)
-                    return _make_toast(f"需求已提交! (record: {record_id})", "success")
+                    if msg_id:
+                        _submitted_request_cards.add(msg_id)
+                    # 回调响应：toast + 替换卡片（方式一：3 秒内立即更新）
+                    resp = _make_toast(f"需求已提交! (record: {record_id})", "success")
+                    resp.card = CallBackCard()
+                    resp.card.type = "raw"
+                    resp.card.data = {
+                        "config": {"update_multi": True},
+                        "header": {
+                            "title": {"tag": "plain_text", "content": "✅ 需求已提交"},
+                            "template": "green",
+                        },
+                        "elements": [
+                            {
+                                "tag": "div",
+                                "text": {
+                                    "tag": "plain_text",
+                                    "content": f"{form_value.get('gift_name', '')} | "
+                                               f"{form_value.get('price', '')} coins | "
+                                               f"{form_value.get('region', '')}\n"
+                                               f"Record ID: {record_id}",
+                                },
+                            },
+                        ],
+                    }
+                    return resp
                 except ValueError as e:
+                    token = feishu.get_token_sync()
+                    feishu.send_text_sync(token, open_id, f"⚠️ 提交失败: {e}")
                     return _make_toast(str(e), "error")
                 except Exception as e:
                     logger.error("[Request] 提交失败: %s", e, exc_info=True)
+                    token = feishu.get_token_sync()
+                    feishu.send_text_sync(token, open_id, f"⚠️ 提交失败: {e}")
                     return _make_toast(f"提交失败: {e}", "error")
             else:
                 # ── 生成表单提交（原有逻辑保持不变）──

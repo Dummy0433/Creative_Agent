@@ -60,9 +60,10 @@ def submit_request(form_data: dict, submitter_open_id: str) -> str:
     if not deadline_str:
         raise ValueError("请填写期望交付时间")
     try:
-        target_date = datetime.datetime.strptime(deadline_str, "%Y-%m-%d").date()
+        # date_picker 返回 "YYYY-MM-DD +0800" 格式，取前10字符
+        target_date = datetime.datetime.strptime(deadline_str[:10], "%Y-%m-%d").date()
     except ValueError:
-        raise ValueError(f"日期格式错误，请使用 YYYY-MM-DD 格式，收到: {deadline_str}")
+        raise ValueError(f"日期格式错误，收到: {deadline_str}")
 
     # 15 工作日校验
     if not check_working_days(target_date, d.request_min_working_days):
