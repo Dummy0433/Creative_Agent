@@ -162,6 +162,40 @@ def handle_finalize(sender_id: str, request_id: str, selected_index: int) -> Non
         feishu.send_text_sync(token, sender_id, f"处理失败: {e}")
 
 
+def _handle_inspire_message(sender_id: str, session, text: str) -> None:
+    """处理 Inspire 对话消息（在后台线程中运行）。"""
+    from pipeline.inspire import handle_inspire_message
+    from pipeline import inspire_store
+    from cards import REQUEST_FORM_CARD
+
+    try:
+        reply, action = _run_async(handle_inspire_message(session, text))
+        token = feishu.get_token_sync()
+
+        if action == "generate":
+            inspire_store.remove(sender_id)
+            feishu.send_text_sync(token, sender_id, reply)
+            feishu.send_card_sync(token, sender_id, GENERATE_FORM_CARD)
+        elif action == "request":
+            inspire_store.remove(sender_id)
+            feishu.send_text_sync(token, sender_id, reply)
+            feishu.send_card_sync(token, sender_id, REQUEST_FORM_CARD)
+        elif action == "stop":
+            inspire_store.remove(sender_id)
+            feishu.send_text_sync(token, sender_id, reply)
+        else:
+            # 继续对话，保存 session
+            inspire_store.save(session)
+            feishu.send_text_sync(token, sender_id, reply)
+    except Exception as e:
+        logger.error("[Inspire] 消息处理失败: %s", e, exc_info=True)
+        try:
+            token = feishu.get_token_sync()
+            feishu.send_text_sync(token, sender_id, f"Inspire 处理出错: {e}")
+        except Exception:
+            pass
+
+
 # ── 事件处理器 ───────────────────────────────────────────────
 
 def on_message(data: P2ImMessageReceiveV1) -> None:
@@ -184,6 +218,18 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
 
     text = content.get("text", "").strip()
     if not text:
+        return
+
+    # 路由0: Inspire 对话中 → 转交 inspire 处理
+    from pipeline import inspire_store
+    inspire_session = inspire_store.get(sender_id)
+    if inspire_session:
+        logger.info("[路由] Inspire 对话: user=%s", sender_id)
+        threading.Thread(
+            target=_handle_inspire_message,
+            args=(sender_id, inspire_session, text),
+            daemon=True,
+        ).start()
         return
 
     session = get_session(sender_id)
@@ -270,8 +316,23 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
             token = feishu.get_token_sync()
             feishu.send_card_sync(token, open_id, REQUEST_FORM_CARD)
         elif event_key == "inspire":
+            from pipeline import inspire_store
+            from models import InspireSession
+            # 如果已有 session，先终止
+            inspire_store.remove(open_id)
+            # 创建新 session
+            session = InspireSession(user_id=open_id)
+            inspire_store.save(session)
             token = feishu.get_token_sync()
-            feishu.send_text_sync(token, open_id, "灵感模式即将上线!")
+            feishu.send_text_sync(
+                token, open_id,
+                "\U0001f3a8 Welcome to Inspire!\n\n"
+                "I'm your gift creative advisor. Tell me about what you're thinking:\n"
+                "- Which region? (e.g., MENA, US, JP)\n"
+                "- What price range?\n"
+                "- Any subject or theme ideas?\n\n"
+                "Type 'stop' to end the session anytime.",
+            )
         else:
             print(f"[菜单] 未知事件: {event_key}")
     except Exception as e:
