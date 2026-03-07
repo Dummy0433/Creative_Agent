@@ -120,3 +120,74 @@ async def generate_response(
     except Exception as e:
         logger.error("[Inspire] 对话生成失败: %s", e, exc_info=True)
         return "抱歉，我遇到了一些问题，请稍后再试。你可以继续描述你的想法，或者输入 'stop' 结束对话。"
+
+
+# ── Pipeline 编排 ─────────────────────────────────────────────────────
+
+
+async def _query_tables_for_context(slots: InspireSlots) -> str:
+    """根据槽位查询 TABLE0-3，返回拼接的上下文文本。
+
+    Note: This is a stub. Task 7 will adapt to the real pipeline/data.py API.
+    """
+    # TODO(T7): Integrate with real pipeline/data.py queries
+    context_parts = []
+    if slots.region:
+        context_parts.append(f"Region: {slots.region}")
+    if slots.price is not None:
+        context_parts.append(f"Price: {slots.price} coins")
+    if slots.price_hint:
+        context_parts.append(f"Price hint: {slots.price_hint}")
+    return " | ".join(context_parts)
+
+
+def _update_slots(session, extracted: dict) -> bool:
+    """用提取结果更新 session 槽位，返回是否有变化。"""
+    old = session.slots.model_copy()
+    if extracted.get("region"):
+        session.slots.region = extracted["region"]
+    if extracted.get("price") is not None:
+        session.slots.price = extracted["price"]
+    if extracted.get("subject"):
+        session.slots.subject = extracted["subject"]
+    if extracted.get("price_hint"):
+        session.slots.price_hint = extracted["price_hint"]
+    return old != session.slots
+
+
+async def handle_inspire_message(
+    session, user_message: str
+) -> tuple[str, str | None]:
+    """处理一轮 Inspire 对话。
+
+    Returns:
+        (reply_text, action) — action is None/"generate"/"request"/"stop"
+    """
+    # Step 1: 提取意图和槽位
+    extracted = await extract_slots(user_message, session.slots)
+    intent = extracted.get("intent", "chat")
+
+    # Exit intents
+    if intent in ("generate", "request"):
+        _update_slots(session, extracted)
+        return "灵感对话已终止。正在为你准备...", intent
+    if intent == "stop":
+        return "感谢使用灵感对话，再见！", "stop"
+
+    # Step 2: 更新槽位，有变化则查表
+    slots_changed = _update_slots(session, extracted)
+    if slots_changed:
+        session.table_context = await _query_tables_for_context(session.slots)
+
+    # Step 3: 生成回复
+    reply = await generate_response(
+        conversation_history=session.conversation_history,
+        table_context=session.table_context,
+        user_message=user_message,
+    )
+
+    # Step 4: 更新对话历史
+    session.conversation_history.append({"role": "user", "text": user_message})
+    session.conversation_history.append({"role": "model", "text": reply})
+
+    return reply, None
