@@ -91,6 +91,10 @@ class GenerationDefaults(BaseModel):
     # ── Request 提单 ──
     request_min_working_days: int = Field(default=15, ge=1, le=60)
     request_exception_contact: str = ""
+    # ── Inspire 灵感对话 ──
+    inspire_extract_model: str = "gemini-3.1-flash-lite-preview"
+    inspire_chat_model: str = "gemini-3.1-flash-lite-preview"
+    inspire_session_ttl: int = 1800
 
     @field_validator("image_models")
     @classmethod
@@ -239,6 +243,25 @@ class CandidateResult(BaseModel):
     region: str                      # 区域
     price: int                       # 价格
     config: "GenerationConfig | None" = None  # 原始请求配置（用于 regenerate）
+
+
+# ── Inspire 灵感对话模型 ──────────────────────────────────
+
+
+class InspireSlots(BaseModel):
+    """Inspire 对话槽位。"""
+    region: str | None = None
+    price: int | None = None
+    price_hint: str | None = None  # "low", "mid", "high"
+    subject: str | None = None
+
+
+class InspireSession(BaseModel):
+    """Inspire 灵感对话 session。"""
+    user_id: str
+    slots: InspireSlots = Field(default_factory=InspireSlots)
+    conversation_history: list[dict] = Field(default_factory=list)
+    table_context: str = ""
 
 
 # ── 编辑 Session 模型 ─────────────────────────────────────

@@ -71,3 +71,8 @@ calendar_quarters:
 # ── Request 提单 ──────────────────────────────────────────────
 request_min_working_days: 15
 request_exception_contact: "请联系 Gift Design 群"
+
+# ── Inspire 灵感对话 ────────────────────────────────────────────
+inspire_extract_model: "gemini-3.1-flash-lite-preview"
+inspire_chat_model: "gemini-3.1-flash-lite-preview"
+inspire_session_ttl: 1800
