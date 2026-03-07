@@ -32,9 +32,11 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
 import feishu
 from cards import GENERATE_FORM_CARD, build_candidate_card, build_mock_candidate
 from defaults import load_defaults
-from models import GenerationConfig
+from models import GenerationConfig, SessionState, EditSession
 from pipeline import generate_candidates, finalize_selected
 from pipeline.candidate_store import get as get_candidate
+from pipeline.edit import handle_edit, handle_editing_text
+from pipeline.session_store import get as get_session, save as save_session, remove as remove_session
 from settings import get_settings
 
 # 使用固定名称，避免 __main__ vs bot_ws 不一致
@@ -115,12 +117,26 @@ def handle_generate(sender_id: str, config: GenerationConfig) -> None:
 
 
 def handle_finalize(sender_id: str, request_id: str, selected_index: int) -> None:
-    """Phase 2: 处理用户选择，执行后处理并发送最终结果。"""
+    """Phase 2: 处理用户选择，执行后处理，创建编辑 session。"""
     token = feishu.get_token_sync()
     try:
         feishu.send_text_sync(token, sender_id, f"已选择方案 {selected_index + 1}，正在处理...")
         result = _run_async(finalize_selected(request_id, selected_index))
         logger.info("Phase 2 完成: %s -> %s", request_id, result.status)
+
+        # 创建 EditSession
+        candidate = get_candidate(request_id)
+        if candidate and result.media_bytes and result.message_id:
+            session = EditSession(
+                user_id=sender_id,
+                state=SessionState.EDITING,
+                request_id=request_id,
+                current_image=result.media_bytes,
+                original_config=candidate.config,
+            )
+            session.message_id_map[result.message_id] = "final"
+            save_session(session)
+            logger.info("[Session] 已创建 user=%s, request_id=%s", sender_id, request_id)
     except Exception as e:
         logger.error("Phase 2 失败: %s", e, exc_info=True)
         feishu.send_text_sync(token, sender_id, f"处理失败: {e}")
@@ -129,13 +145,15 @@ def handle_finalize(sender_id: str, request_id: str, selected_index: int) -> Non
 # ── 事件处理器 ───────────────────────────────────────────────
 
 def on_message(data: P2ImMessageReceiveV1) -> None:
-    """处理用户直接发送的文本消息（旧版文本模式）。"""
+    """处理用户消息：根据 session 状态和 parent_id 路由到正确流程。"""
     event = data.event
     sender_id = event.sender.sender_id.open_id
     msg_type = event.message.message_type
+    parent_id = event.message.parent_id
     content = json.loads(event.message.content)
 
-    logger.info("[消息] %s: %s", sender_id, content)
+    logger.info("[消息] %s: type=%s, parent_id=%s, content=%s",
+                sender_id, msg_type, parent_id, content)
 
     if msg_type != "text":
         return
@@ -144,6 +162,25 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
     if not text:
         return
 
+    session = get_session(sender_id)
+
+    # 路由1: 回复了 bot 发出的图片 → 编辑
+    if parent_id and session and parent_id in session.message_id_map:
+        logger.info("[路由] 回复图片编辑: user=%s, parent=%s", sender_id, parent_id)
+        threading.Thread(
+            target=handle_edit, args=(sender_id, session, text), daemon=True,
+        ).start()
+        return
+
+    # 路由2: 有活跃 EDITING/DELIVERED session + 纯文字
+    if session and session.state in (SessionState.EDITING, SessionState.DELIVERED):
+        logger.info("[路由] 编辑状态文字: user=%s, state=%s", sender_id, session.state)
+        threading.Thread(
+            target=handle_editing_text, args=(sender_id, session, text), daemon=True,
+        ).start()
+        return
+
+    # 路由3: 默认 → 新生成
     params = parse_input(text)
     if not params:
         token = feishu.get_token_sync()
@@ -151,11 +188,8 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
         return
 
     config = GenerationConfig(**params)
-
     threading.Thread(
-        target=handle_generate,
-        args=(sender_id, config),
-        daemon=True,
+        target=handle_generate, args=(sender_id, config), daemon=True,
     ).start()
 
 
@@ -260,6 +294,26 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
                 token = feishu.get_token_sync()
                 feishu.send_card_sync(token, open_id, GENERATE_FORM_CARD)
                 return _make_toast("请在新卡片中修改参数")
+
+            # ── 路由卡片：重新生成 ──
+            if act == "route_regen":
+                logger.info("[卡片] 用户=%s 选择重新生成", open_id)
+                session = get_session(open_id)
+                config = session.original_config if session else None
+                remove_session(open_id)
+                if config:
+                    _generate_pool.submit(handle_generate, open_id, config)
+                    return _make_toast("正在重新生成，请稍候...")
+                return _make_toast("Session 已过期，请重新提交", "warning")
+
+            # ── 路由卡片：继续编辑 ──
+            if act == "route_continue":
+                logger.info("[卡片] 用户=%s 选择继续编辑", open_id)
+                session = get_session(open_id)
+                if session:
+                    session.state = SessionState.EDITING
+                    save_session(session)
+                return _make_toast("继续编辑，请回复图片并输入调整指令")
 
             # 未知 action
             logger.warning("[卡片] 未知 action: %s, action_value=%s", act, action_value)
