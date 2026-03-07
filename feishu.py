@@ -232,6 +232,19 @@ async def send_card(token, receive_id, card_content: dict):
     return resp.json().get("data", {}).get("message_id", "")
 
 
+async def create_bitable_record(token, app_token, table_id, fields: dict):
+    """在多维表格中创建一条记录，返回 record_id。"""
+    base = get_settings().feishu_base_url
+    url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
+    body = {"fields": fields}
+    async with _new_async_client() as client:
+        resp = await client.post(url, headers=_headers(token), json=body)
+    resp.raise_for_status()
+    data = resp.json().get("data", {})
+    record_id = data.get("record", {}).get("record_id", "")
+    return record_id
+
+
 # ── Sync 便捷函数（供 bot_ws.py 等同步调用方使用）────────────
 # Lark SDK 内部有 event loop，不能用 asyncio.run() 桥接。
 # 因此 sync 函数直接使用 httpx 同步客户端。
@@ -386,3 +399,16 @@ def send_card_sync(token, receive_id, card_content):
         resp = client.post(url, headers=_headers(token), json=body)
     resp.raise_for_status()
     return resp.json().get("data", {}).get("message_id", "")
+
+
+def create_bitable_record_sync(token, app_token, table_id, fields: dict):
+    """在多维表格中创建一条记录（sync），返回 record_id。"""
+    base = get_settings().feishu_base_url
+    url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
+    body = {"fields": fields}
+    with _sync_client() as client:
+        resp = client.post(url, headers=_headers(token), json=body)
+    resp.raise_for_status()
+    data = resp.json().get("data", {})
+    record_id = data.get("record", {}).get("record_id", "")
+    return record_id
