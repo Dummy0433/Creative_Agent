@@ -157,9 +157,12 @@ class GeminiEditProvider(EditProvider):
         self.api_key = s.gemini_api_key
         self.base_url = s.gemini_base_url
         from defaults import load_defaults
+        from pathlib import Path
         d = load_defaults()
         self.models = models or d.edit_models
         self.timeout = timeout if timeout is not None else d.edit_timeout
+        prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "edit_system.md"
+        self.system_prompt = prompt_path.read_text(encoding="utf-8")
 
     async def edit(self, image, instruction, conversation_history=None):
         from models import EditResult
@@ -181,6 +184,7 @@ class GeminiEditProvider(EditProvider):
                 url = f"{self.base_url}/models/{model}:generateContent"
                 headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
                 body = {
+                    "system_instruction": {"parts": [{"text": self.system_prompt}]},
                     "contents": contents,
                     "generationConfig": {
                         "responseModalities": ["TEXT", "IMAGE"],

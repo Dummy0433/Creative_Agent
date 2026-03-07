@@ -126,7 +126,7 @@ def handle_finalize(sender_id: str, request_id: str, selected_index: int) -> Non
 
         # 创建 EditSession
         candidate = get_candidate(request_id)
-        if candidate and result.media_bytes and result.message_id:
+        if candidate and candidate.config and result.media_bytes and result.message_id:
             session = EditSession(
                 user_id=sender_id,
                 state=SessionState.EDITING,

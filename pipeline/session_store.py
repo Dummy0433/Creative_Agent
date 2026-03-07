@@ -4,13 +4,14 @@ import logging
 import threading
 import time
 
+from defaults import load_defaults
 from models import EditSession
 
 logger = logging.getLogger(__name__)
 
 _store: dict[str, tuple[EditSession, float]] = {}
 _lock = threading.Lock()
-_TTL = 1800  # 30 分钟
+_TTL = load_defaults().edit_session_ttl
 
 
 def save(session: EditSession) -> None:

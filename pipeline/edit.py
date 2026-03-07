@@ -2,7 +2,6 @@
 
 import logging
 import time
-from pathlib import Path
 
 import feishu
 from models import EditSession, SessionState
@@ -10,13 +9,7 @@ from providers.registry import get_edit_provider
 
 logger = logging.getLogger(__name__)
 
-_EDIT_SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "edit_system.md"
-
 _TERMINATION_WORDS = {"好了", "不用了", "不需要了", "OK", "ok", "done", "Done", "算了", "结束"}
-
-
-def _load_edit_system_prompt() -> str:
-    return _EDIT_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 
 def matches_termination(text: str) -> bool:
@@ -38,7 +31,20 @@ def _run_async(coro):
 
 def handle_edit(sender_id: str, session: EditSession, text: str) -> None:
     """执行一轮图片编辑：调用 EditProvider → 发送结果 → 更新 session。"""
+    from defaults import load_defaults
     from pipeline.session_store import save as save_session
+
+    # 检查是否超过最大编辑次数
+    round_num = len([v for v in session.message_id_map.values() if v.startswith("edit_")]) + 1
+    d = load_defaults()
+    if round_num > d.edit_max_rounds:
+        from cards import build_routing_card
+        session.state = SessionState.DELIVERED
+        save_session(session)
+        token = feishu.get_token_sync()
+        feishu.send_text_sync(token, sender_id, f"已达到最大编辑次数 ({d.edit_max_rounds})，请选择下一步操作。")
+        feishu.send_card_sync(token, sender_id, build_routing_card(session.request_id))
+        return
 
     token = feishu.get_token_sync()
     feishu.send_text_sync(token, sender_id, "正在编辑图片...")
@@ -57,7 +63,6 @@ def handle_edit(sender_id: str, session: EditSession, text: str) -> None:
         feishu.send_text_sync(token, sender_id, result.message)
 
         # 更新 session
-        round_num = len([v for v in session.message_id_map.values() if v.startswith("edit_")]) + 1
         session.current_image = result.image
         session.conversation_history = result.updated_history
         session.message_id_map[msg_id] = f"edit_{round_num}"
