@@ -231,9 +231,9 @@ async def handle_inspire_message(
     # Exit intents
     if intent in ("generate", "request"):
         _update_slots(session, extracted)
-        return "灵感对话已终止。正在为你准备...", intent
+        return "OK! Leaving Inspire — preparing your form... / 好的！正在为你准备表单...", intent
     if intent == "stop":
-        return "感谢使用灵感对话，再见！", "stop"
+        return "Thanks for using Inspire, see you! / 感谢使用灵感对话，再见！", "stop"
 
     # Step 2: 更新槽位，有变化则查表
     slots_changed = _update_slots(session, extracted)

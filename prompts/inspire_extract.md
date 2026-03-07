@@ -15,11 +15,11 @@ Return a JSON object with these fields:
 - "price_hint": "low"/"mid"/"high" or null (if user says "cheap", "expensive", etc.)
 - "intent": one of "chat"/"generate"/"request"/"stop"
 
-## Intent Rules
-- "chat": user is discussing, asking questions, or exploring ideas
-- "generate": user explicitly wants to try generating an image (keywords: 生成, generate, 试试, try, 做一个)
-- "request": user wants to submit a formal request (keywords: 提需求, 提单, submit request, 下需求)
-- "stop": user wants to end the conversation (keywords: 停, 结束, 再见, bye, stop, 谢谢)
+## Intent Rules (IMPORTANT: default to "chat" unless the user EXPLICITLY signals an exit)
+- "chat": user is discussing, asking questions, exploring ideas, or describing what they want to make. This is the DEFAULT — use this for any message that is part of a creative conversation. Examples: "我想做一个中东风格的礼物", "做一个狮子", "What about a rose theme?", "试试花卉？"
+- "generate": user explicitly wants to LEAVE this conversation and go to the image generation tool. They must clearly signal they are done talking and ready to generate. Keywords: "去生成", "开始生成", "生成吧", "generate it", "let's generate", "好了帮我生成". NOT triggered by "做一个" or "试试" (those are chat).
+- "request": user explicitly wants to LEAVE this conversation and submit a formal design request. Keywords: "提需求", "提单", "submit request", "下需求", "我要提个需求"
+- "stop": user explicitly wants to END the conversation entirely. Keywords: "停", "结束", "再见", "bye", "stop", "STOP", "不聊了"
 
 ## Region Mapping (fuzzy match)
 - 中东/阿拉伯/Middle East → MENA

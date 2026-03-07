@@ -42,7 +42,7 @@ async def test_handle_message_generate_exit():
         reply, action = await handle_inspire_message(session, "帮我生成一个")
 
     assert action == "generate"
-    assert "终止" in reply
+    assert "Inspire" in reply or "准备" in reply
 
 
 @pytest.mark.asyncio
@@ -59,7 +59,7 @@ async def test_handle_message_request_exit():
         reply, action = await handle_inspire_message(session, "我要提个需求")
 
     assert action == "request"
-    assert "终止" in reply
+    assert "Inspire" in reply or "准备" in reply
 
 
 @pytest.mark.asyncio
