@@ -33,8 +33,9 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
 import feishu
 from cards import GENERATE_FORM_CARD, build_candidate_card, build_mock_candidate
 from defaults import load_defaults
-from models import GenerationConfig, SessionState, EditSession
+from models import GenerationConfig, SessionState, EditSession, InspireSession
 from pipeline import generate_candidates, finalize_selected
+from pipeline import inspire_store
 from pipeline.candidate_store import get as get_candidate
 from pipeline.edit import handle_edit, handle_editing_text
 from pipeline.session_store import get as get_session, save as save_session, remove as remove_session
@@ -165,7 +166,6 @@ def handle_finalize(sender_id: str, request_id: str, selected_index: int) -> Non
 def _handle_inspire_message(sender_id: str, session, text: str) -> None:
     """处理 Inspire 对话消息（在后台线程中运行）。"""
     from pipeline.inspire import handle_inspire_message
-    from pipeline import inspire_store
     from cards import REQUEST_FORM_CARD
 
     try:
@@ -221,7 +221,6 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
         return
 
     # 路由0: Inspire 对话中 → 转交 inspire 处理
-    from pipeline import inspire_store
     inspire_session = inspire_store.get(sender_id)
     if inspire_session:
         logger.info("[路由] Inspire 对话: user=%s", sender_id)
@@ -316,8 +315,6 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
             token = feishu.get_token_sync()
             feishu.send_card_sync(token, open_id, REQUEST_FORM_CARD)
         elif event_key == "inspire":
-            from pipeline import inspire_store
-            from models import InspireSession
             # 如果已有 session，先终止
             inspire_store.remove(open_id)
             # 创建新 session

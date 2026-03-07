@@ -1,6 +1,6 @@
 """Inspire 路由测试（单元级别）。"""
 
-from models import InspireSession, InspireSlots
+from models import InspireSession
 from pipeline import inspire_store
 
 
