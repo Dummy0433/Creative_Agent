@@ -65,13 +65,15 @@ def _headers(token):
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-async def query_bitable(token, app_token, table_id, filter_expr=None):
+async def query_bitable(token, app_token, table_id, filter_expr=None, view_id=None):
     """查询多维表格记录。"""
     base = get_settings().feishu_base_url
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
     params = {"page_size": 100}
     if filter_expr:
         params["filter"] = filter_expr
+    if view_id:
+        params["view_id"] = view_id
     async with _new_async_client() as client:
         resp = await client.get(url, headers=_headers(token), params=params)
     resp.raise_for_status()
@@ -267,12 +269,14 @@ def get_token_sync(app_id=None, app_secret=None):
     return token
 
 
-def query_bitable_sync(token, app_token, table_id, filter_expr=None):
+def query_bitable_sync(token, app_token, table_id, filter_expr=None, view_id=None):
     base = get_settings().feishu_base_url
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
     params = {"page_size": 100}
     if filter_expr:
         params["filter"] = filter_expr
+    if view_id:
+        params["view_id"] = view_id
     with _sync_client() as client:
         resp = client.get(url, headers=_headers(token), params=params)
     resp.raise_for_status()
