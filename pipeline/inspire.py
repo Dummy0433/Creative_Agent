@@ -9,11 +9,38 @@ from pathlib import Path
 
 import httpx
 
+import feishu
 from models import InspireSlots
 from settings import get_settings
 from defaults import load_defaults
 
 logger = logging.getLogger(__name__)
+
+# ── 表查询依赖（便于测试 mock）──────────────────────────────────
+
+
+async def _feishu_get_token() -> str:
+    return await feishu.get_token()
+
+
+async def _resolve_routing(token: str, region: str):
+    from pipeline.data import resolve_routing
+    return await resolve_routing(token, region)
+
+
+async def _query_region_info(token: str, region: str, routing):
+    from pipeline.data import query_region_info
+    return await query_region_info(token, region, routing)
+
+
+async def _query_tier_rules(token: str, region: str, price: int, routing):
+    from pipeline.data import query_tier_rules
+    return await query_tier_rules(token, region, price, routing)
+
+
+async def _query_instances(token: str, region: str, price: int, limit: int, routing):
+    from pipeline.data import query_instances
+    return await query_instances(token, region, price, limit=limit, routing=routing)
 
 _EXTRACT_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "inspire_extract.md"
 
@@ -126,19 +153,53 @@ async def generate_response(
 
 
 async def _query_tables_for_context(slots: InspireSlots) -> str:
-    """根据槽位查询 TABLE0-3，返回拼接的上下文文本。
+    """根据槽位查询 TABLE0-3，返回拼接的上下文文本供对话模型参考。"""
+    if not slots.region:
+        return ""
 
-    Note: This is a stub. Task 7 will adapt to the real pipeline/data.py API.
-    """
-    # TODO(T7): Integrate with real pipeline/data.py queries
     context_parts = []
-    if slots.region:
-        context_parts.append(f"Region: {slots.region}")
-    if slots.price is not None:
-        context_parts.append(f"Price: {slots.price} coins")
-    if slots.price_hint:
-        context_parts.append(f"Price hint: {slots.price_hint}")
-    return " | ".join(context_parts)
+    try:
+        token = await _feishu_get_token()
+        routing = await _resolve_routing(token, slots.region)
+
+        # TABLE1: 区域风格
+        try:
+            region_data = await _query_region_info(token, slots.region, routing)
+            style_keys = ["设计风格", "配色", "特色物件", "主体画法", "场景", "氛围"]
+            style_parts = [f"{k}: {region_data[k]}" for k in style_keys if region_data.get(k)]
+            if style_parts:
+                context_parts.append(f"Region Style ({slots.region}):\n" + "\n".join(style_parts))
+        except Exception as e:
+            logger.warning("[Inspire] TABLE1 查询失败: %s", e)
+
+        # TABLE2: 档位规则（需要价格）
+        if slots.price is not None:
+            try:
+                tier_data = await _query_tier_rules(token, slots.region, slots.price, routing)
+                tier_keys = ["价格层级", "价格区间", "允许主体", "禁止主体", "容器备选", "材质"]
+                tier_parts = [f"{k}: {tier_data[k]}" for k in tier_keys if tier_data.get(k)]
+                if tier_parts:
+                    context_parts.append(f"Tier Rules (price={slots.price}):\n" + "\n".join(tier_parts))
+            except Exception as e:
+                logger.warning("[Inspire] TABLE2 查询失败: %s", e)
+
+        # TABLE3: 参考案例（需要区域，价格可选）
+        try:
+            instances = await _query_instances(token, slots.region, slots.price or 0, limit=3, routing=routing)
+            if instances:
+                instance_lines = []
+                for inst in instances:
+                    name = inst.get("名称", inst.get("name", "unnamed"))
+                    desc_parts = [f"{k}: {inst[k]}" for k in ["主体", "场景", "价格层级"] if inst.get(k)]
+                    instance_lines.append(f"- {name} ({', '.join(desc_parts)})")
+                context_parts.append("Reference Cases:\n" + "\n".join(instance_lines))
+        except Exception as e:
+            logger.warning("[Inspire] TABLE3 查询失败: %s", e)
+
+    except Exception as e:
+        logger.warning("[Inspire] 表查询初始化失败: %s", e)
+
+    return "\n\n".join(context_parts)
 
 
 def _update_slots(session, extracted: dict) -> bool:
