@@ -219,3 +219,32 @@ class CandidateResult(BaseModel):
     region: str                      # 区域
     price: int                       # 价格
     config: "GenerationConfig | None" = None  # 原始请求配置（用于 regenerate）
+
+
+# ── 编辑 Session 模型 ─────────────────────────────────────
+
+
+class SessionState(str, Enum):
+    """编辑 Session 状态枚举。"""
+    SELECTING = "selecting"
+    EDITING   = "editing"
+    DELIVERED = "delivered"
+
+
+class EditSession(BaseModel):
+    """用户级编辑 Session，存储编辑流状态和对话历史。"""
+    user_id: str
+    state: SessionState
+    request_id: str
+    current_image: bytes = Field(exclude=True)
+    conversation_history: list[dict] = Field(default_factory=list)
+    message_id_map: dict[str, str] = Field(default_factory=dict)
+    original_config: GenerationConfig
+    last_active: float = Field(default_factory=lambda: __import__('time').time())
+
+
+class EditResult(BaseModel):
+    """图片编辑结果：编辑后图片 + AI 引导文字 + 更新后对话历史。"""
+    image: bytes = Field(exclude=True)
+    message: str
+    updated_history: list[dict] = Field(default_factory=list)
