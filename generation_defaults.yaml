@@ -2,8 +2,8 @@
 # 用户请求中未提供的参数将使用这里的值
 
 # ── 模型选择 ────────────────────────────────────────────────
-analyze_model: "gemini-3.1-pro-preview"
-prompt_model: "gemini-3-flash-preview"
+analyze_model: "gemini-3.1-flash-lite-preview"
+prompt_model: "gemini-3.1-flash-lite-preview"
 image_provider: "gemini"
 image_models:
   - "gemini-3.1-flash-image-preview"
@@ -29,6 +29,14 @@ default_price: 1
 # ── 提示词覆盖（null = 使用 prompts/*.md 文件）──────────────
 analyze_system_prompt: null
 prompt_gen_system_prompt: null
+
+# ── 编辑流 ────────────────────────────────────────────────
+edit_provider: "gemini"
+edit_models:
+  - "gemini-3.1-flash-image-preview"
+edit_timeout: 120
+edit_max_rounds: 10
+edit_session_ttl: 1800
 
 # ── 层级配置 ──────────────────────────────────────────────────
 # 每个层级可独立配置提示词文件和可选的模型/图片参数覆盖

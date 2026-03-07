@@ -13,6 +13,7 @@
 
 ## 输出格式（严格JSON）
 {
+  "gift_name": "礼物展示名（简短、直白、有趣，≤6个英文单词或≤4个中文字，适合在礼物面板显示）",
   "SUBJECT_AND_DETAILS": "最终主体描述",
   "COLOR_PALETTE": "配色自然语言描述",
   "MATERIAL_1": "材质描述1",
@@ -22,3 +23,9 @@
   "OPTIONAL_TEXT": "需要转成图片的文字形状",
   "pattern": "yes/none"
 }
+
+## gift_name 命名要求
+- 简洁有趣，像 TikTok 现有礼物风格：Rose、Leon、Wink wink、Pop
+- 优先用英文，除非主体本身是中文文化特有概念
+- 不要重复主体全称，提炼最有辨识度的1-2个词
+- 避免泛化词（如 Gift、Present、Item）

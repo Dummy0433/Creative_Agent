@@ -71,6 +71,12 @@ class GenerationDefaults(BaseModel):
     # 提示词覆盖（None = 使用 prompts/*.md 文件）
     analyze_system_prompt: str | None = None
     prompt_gen_system_prompt: str | None = None
+    # 编辑流
+    edit_provider: str = "gemini"
+    edit_models: list[str] = Field(default_factory=lambda: ["gemini-3.1-flash-image-preview"])
+    edit_timeout: int = Field(default=120, ge=1, le=600)
+    edit_max_rounds: int = Field(default=10, ge=1, le=50)
+    edit_session_ttl: int = Field(default=1800, ge=60, le=7200)
     # 层级配置（键=层级名 如 "P0"，值=TierProfile）
     tier_profiles: dict[str, TierProfile] = {}
 
@@ -219,3 +225,32 @@ class CandidateResult(BaseModel):
     region: str                      # 区域
     price: int                       # 价格
     config: "GenerationConfig | None" = None  # 原始请求配置（用于 regenerate）
+
+
+# ── 编辑 Session 模型 ─────────────────────────────────────
+
+
+class SessionState(str, Enum):
+    """编辑 Session 状态枚举。"""
+    SELECTING = "selecting"
+    EDITING   = "editing"
+    DELIVERED = "delivered"
+
+
+class EditSession(BaseModel):
+    """用户级编辑 Session，存储编辑流状态和对话历史。"""
+    user_id: str
+    state: SessionState
+    request_id: str
+    current_image: bytes = Field(exclude=True)
+    conversation_history: list[dict] = Field(default_factory=list)
+    message_id_map: dict[str, str] = Field(default_factory=dict)
+    original_config: GenerationConfig
+    last_active: float = Field(default_factory=lambda: __import__('time').time())
+
+
+class EditResult(BaseModel):
+    """图片编辑结果：编辑后图片 + AI 引导文字 + 更新后对话历史。"""
+    image: bytes = Field(exclude=True)
+    message: str
+    updated_history: list[dict] = Field(default_factory=list)

@@ -1,13 +1,15 @@
-"""主编排器：两阶段生成流程。
+"""主编排器：两阶段生成流程（async）。
 
 Phase 1 — generate_candidates(): 数据查询 → LLM 分析 → 4x 并行生图 → 暂存候选
 Phase 2 — finalize_selected():   取回选中图 → 后处理 → 发飞书
 兼容入口 — generate():            Phase 1 → auto-select #0 → Phase 2
 """
 
+import asyncio
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import time
+from functools import partial
 
 import feishu
 from models import CandidateResult, GenerationConfig, MediaType, PipelineResult
@@ -37,7 +39,7 @@ def _log_dict(label: str, data: dict, rid: str) -> None:
 # ── Phase 1 ────────────────────────────────────────────────
 
 
-def generate_candidates(config: GenerationConfig) -> CandidateResult:
+async def generate_candidates(config: GenerationConfig) -> CandidateResult:
     """Phase 1: 数据查询 → LLM 分析 → 4x 并行生图 → 暂存候选。
 
     异常时向上抛出，由调用方处理。
@@ -48,26 +50,29 @@ def generate_candidates(config: GenerationConfig) -> CandidateResult:
     region, subject, price = cfg.region, cfg.subject, cfg.price
 
     logger.info("[%s] Phase 1 开始: 区域=%s, 主体=%s, 价格=%d", rid, region, subject, price)
+    _t0 = time.monotonic()
 
     # 步骤1: 飞书认证
-    token = feishu.get_token()
+    token = await feishu.get_token()
 
     # 步骤1.5: TABLE0 路由解析（区域 → 各表格物理地址）
-    routing = resolve_routing(token, region)
+    routing = await resolve_routing(token, region)
     logger.debug("[%s] 路由: T1=%s/%s, T2=%s/%s, T3=%s/%s", rid,
                  routing.archetype_app_token, routing.archetype_table_id,
                  routing.rules_app_token, routing.rules_table_id,
                  routing.instance_app_token, routing.instance_table_id)
 
-    # 步骤2: 查询 TABLE1（区域原型），获取设计风格、特色物件等
-    region_info = query_region_info(token, region, routing=routing)
+    # 步骤2+3: 并行查询 TABLE1(区域原型) + TABLE2(档位规则)
+    region_info, tier_rules = await asyncio.gather(
+        query_region_info(token, region, routing=routing),
+        query_tier_rules(token, region, price, routing=routing),
+    )
     _log_dict("TABLE1 区域信息", region_info, rid)
-
-    # 步骤3: 查询 TABLE2（档位规则），根据价格匹配档位
-    tier_rules = query_tier_rules(token, region, price, routing=routing)
     tier = next((tier_rules[k] for k in _TIER_KEYS if tier_rules.get(k)), "?")
     logger.info("[%s] 档位匹配: 价格=%d → %s", rid, price, tier)
     _log_dict("TABLE2 档位规则", tier_rules, rid)
+    _t1 = time.monotonic()
+    logger.info("[PERF-TEST] [%s] 飞书认证+路由+TABLE1/2 查询: %.2fs", rid, _t1 - _t0)
 
     # 步骤3.5: 加载 TierProfile 并覆盖配置
     profile = load_tier_profile(tier)
@@ -80,14 +85,20 @@ def generate_candidates(config: GenerationConfig) -> CandidateResult:
     if subject_final != subject:
         logger.info("[%s] 主体变更: '%s' → '%s'", rid, subject, subject_final)
 
-    # 步骤5: 查询 TABLE3（参考案例），按同价格档位随机抽取
-    instances = query_instances(token, region, price=price, limit=3, routing=routing)
+    # 步骤5+5.1: 并行查询 TABLE3 + 下载参考图
+    # TABLE3 查询和参考图下载串行依赖，但与后续 LLM 上下文组装无关
+    _t2 = time.monotonic()
+    instances = await query_instances(token, region, price=price, limit=3, routing=routing)
     logger.debug("[%s] TABLE3 参考案例: %d 条", rid, len(instances))
     for i, inst in enumerate(instances, 1):
         _log_dict(f"案例{i}", inst, rid)
+    _t3 = time.monotonic()
+    logger.info("[PERF-TEST] [%s] TABLE3 查询: %.2fs", rid, _t3 - _t2)
 
-    # 步骤5.1: 下载参考图片
-    ref_images = download_instance_images(token, instances)
+    # 步骤5.1: 并行下载参考图片
+    ref_images = await download_instance_images(token, instances)
+    _t4 = time.monotonic()
+    logger.info("[PERF-TEST] [%s] 参考图下载 (%d张): %.2fs", rid, len(ref_images), _t4 - _t3)
     logger.debug("[%s] 参考图片: %d 张", rid, len(ref_images))
 
     # 步骤5.5: 组装 LLM 上下文
@@ -104,77 +115,102 @@ def generate_candidates(config: GenerationConfig) -> CandidateResult:
     analyze_tier_file = profile.analyze_prompt_file if profile else None
     analyze_system = get_analyze_system(cfg.analyze_system_prompt, tier_file=analyze_tier_file)
     logger.debug("[%s] analyze 系统提示词:\n%s", rid, analyze_system)
+    _t5 = time.monotonic()
     try:
-        structured = text_provider.generate(cfg.analyze_model, analyze_system, user_input)
+        structured = await text_provider.generate(cfg.analyze_model, analyze_system, user_input)
     except Exception as e:
         raise RuntimeError(f"结构化分析失败 (model={cfg.analyze_model}): {e}") from e
+    _t6 = time.monotonic()
+    logger.info("[PERF-TEST] [%s] LLM 结构化分析 (%s): %.2fs", rid, cfg.analyze_model, _t6 - _t5)
     logger.debug("[%s] 结构化分析 JSON:\n%s", rid, json.dumps(structured, ensure_ascii=False, indent=2))
+
+    # 提取 gift_name（Gemini 生成的简短展示名），回退到 subject_final
+    gift_name = structured.get("gift_name") or subject_final
+    logger.info("[%s] 礼物展示名: '%s'", rid, gift_name)
 
     # 步骤7: LLM 提示词生成（使用层级提示词）
     prompt_gen_tier_file = profile.prompt_gen_prompt_file if profile else None
     prompt_gen_system = get_prompt_gen_system(cfg.prompt_gen_system_prompt, tier_file=prompt_gen_tier_file)
     prompt_input = f"请将以下结构化JSON转换为图片生成提示词：\n{json.dumps(structured, ensure_ascii=False)}"
+    _t7 = time.monotonic()
     try:
-        prompts = text_provider.generate(cfg.prompt_model, prompt_gen_system, prompt_input)
+        prompts = await text_provider.generate(cfg.prompt_model, prompt_gen_system, prompt_input)
     except Exception as e:
         raise RuntimeError(f"提示词生成失败 (model={cfg.prompt_model}): {e}") from e
+    _t8 = time.monotonic()
+    logger.info("[PERF-TEST] [%s] LLM 提示词生成 (%s): %.2fs", rid, cfg.prompt_model, _t8 - _t7)
     logger.info("[%s] 提示词: %s", rid, prompts.get('english_prompt', '')[:120])
     logger.debug("[%s] 完整提示词: %s", rid, prompts)
 
-    # 步骤8: 并行生图
+    # 步骤8: 并行生图（asyncio.gather 替代 ThreadPoolExecutor）
+    _t9 = time.monotonic()
     logger.info("[%s] 生成 %d 张候选图...", rid, cfg.candidate_count)
     image_provider = get_image_provider(
         name=cfg.image_provider, models=cfg.image_models,
         aspect_ratio=cfg.image_aspect_ratio, image_size=cfg.image_size,
         timeout=cfg.image_timeout,
     )
-    with ThreadPoolExecutor(max_workers=cfg.candidate_count) as pool:
-        futures = [
-            pool.submit(image_provider.generate, prompts["english_prompt"],
-                        reference_images=ref_images or None)
-            for _ in range(cfg.candidate_count)
-        ]
-        image_list: list[bytes] = []
-        for i, f in enumerate(futures):
-            try:
-                img = f.result(timeout=cfg.image_timeout)
-                image_list.append(img)
-                logger.debug("[%s]   候选图 %d: %d 字节", rid, i + 1, len(img))
-            except Exception as e:
-                logger.warning("[%s]   候选图 %d 生成失败: %s", rid, i + 1, e)
-        # 部分候选图失败时记录警告
-        failed_count = cfg.candidate_count - len(image_list)
-        if failed_count > 0:
-            logger.warning("[%s] %d/%d 张候选图生成失败", rid, failed_count, cfg.candidate_count)
+
+    async def _gen_one(idx: int) -> bytes | None:
+        try:
+            img = await image_provider.generate(
+                prompts["english_prompt"],
+                reference_images=ref_images or None,
+            )
+            logger.debug("[%s]   候选图 %d: %d 字节", rid, idx + 1, len(img))
+            return img
+        except Exception as e:
+            logger.warning("[%s]   候选图 %d 生成失败: %s", rid, idx + 1, e)
+            return None
+
+    gen_results = await asyncio.gather(*[_gen_one(i) for i in range(cfg.candidate_count)])
+    image_list: list[bytes] = [img for img in gen_results if img is not None]
+
+    failed_count = cfg.candidate_count - len(image_list)
+    if failed_count > 0:
+        logger.warning("[%s] %d/%d 张候选图生成失败", rid, failed_count, cfg.candidate_count)
+    _t10 = time.monotonic()
+    logger.info("[PERF-TEST] [%s] 4x 并行生图: %.2fs (%d张成功)", rid, _t10 - _t9, len(image_list))
 
     if not image_list:
         raise RuntimeError("所有候选图生成均失败")
 
-    # 步骤8.5: 抠图 + 拼图预览
-    matted_list: list[bytes] = []
-    preview_list: list[bytes] = []
-    for i, img in enumerate(image_list):
+    # 步骤8.5: 并行抠图 + 拼图预览（CPU 密集型，用 executor）
+    loop = asyncio.get_running_loop()
+
+    async def _mat_one(idx: int, img: bytes) -> tuple[bytes, bytes]:
         try:
-            matted, preview = matting_and_composite(img, gift_name=subject_final, price=price)
-            matted_list.append(matted)
-            preview_list.append(preview)
+            matted, preview = await loop.run_in_executor(
+                None, partial(matting_and_composite, img, gift_name=gift_name, price=price),
+            )
             logger.debug("[%s]   候选图 %d: 抠图 %d 字节, 预览 %d 字节",
-                         rid, i + 1, len(matted), len(preview))
+                         rid, idx + 1, len(matted), len(preview))
+            return matted, preview
         except Exception as e:
-            logger.warning("[%s]   候选图 %d 抠图/拼图失败: %s，使用原图", rid, i + 1, e)
-            matted_list.append(img)
-            preview_list.append(img)
+            logger.warning("[%s]   候选图 %d 抠图/拼图失败: %s，使用原图", rid, idx + 1, e)
+            return img, img
+
+    mat_results = await asyncio.gather(*[_mat_one(i, img) for i, img in enumerate(image_list)])
+    matted_list = [r[0] for r in mat_results]
+    preview_list = [r[1] for r in mat_results]
+    _t11 = time.monotonic()
+    logger.info("[PERF-TEST] [%s] 4x 抠图+拼图: %.2fs", rid, _t11 - _t10)
     logger.info("[%s] 抠图+拼图完成: %d 张", rid, len(matted_list))
 
-    # 步骤9: 上传预览图（composite）到飞书（用于卡片展示）
-    image_keys: list[str] = []
-    for i, preview in enumerate(preview_list):
+    # 步骤9: 并行上传预览图（composite）到飞书
+    async def _upload_one(idx: int, preview: bytes) -> str | None:
         try:
-            key = feishu.upload_image(token, preview)
-            image_keys.append(key)
-            logger.debug("[%s]   预览图 %d: %s", rid, i + 1, key)
+            key = await feishu.upload_image(token, preview)
+            logger.debug("[%s]   预览图 %d: %s", rid, idx + 1, key)
+            return key
         except Exception as e:
-            logger.warning("[%s]   预览图 %d 上传失败: %s", rid, i + 1, e)
+            logger.warning("[%s]   预览图 %d 上传失败: %s", rid, idx + 1, e)
+            return None
+
+    upload_results = await asyncio.gather(*[_upload_one(i, p) for i, p in enumerate(preview_list)])
+    image_keys: list[str] = [k for k in upload_results if k is not None]
+    _t12 = time.monotonic()
+    logger.info("[PERF-TEST] [%s] 4x 预览上传飞书: %.2fs", rid, _t12 - _t11)
 
     # 组装 CandidateResult 并暂存（image_bytes_list 存的是 matted 透明图）
     candidate = CandidateResult(
@@ -185,6 +221,8 @@ def generate_candidates(config: GenerationConfig) -> CandidateResult:
     )
     store_candidate(candidate)
 
+    _t13 = time.monotonic()
+    logger.info("[PERF-TEST] [%s] ══ Phase 1 总耗时: %.2fs ══", rid, _t13 - _t0)
     logger.info("[%s] Phase 1 完成: %d 张候选图已暂存", rid, len(image_list))
     return candidate
 
@@ -192,7 +230,7 @@ def generate_candidates(config: GenerationConfig) -> CandidateResult:
 # ── Phase 2 ────────────────────────────────────────────────
 
 
-def finalize_selected(request_id: str, selected_index: int) -> PipelineResult:
+async def finalize_selected(request_id: str, selected_index: int) -> PipelineResult:
     """Phase 2: 取回选中候选图 → 层级后处理 → 发飞书。"""
     candidate = get_candidate(request_id)
     if candidate is None:
@@ -231,21 +269,24 @@ def finalize_selected(request_id: str, selected_index: int) -> PipelineResult:
     try:
         logger.debug("[%s] 正在发送最终结果到飞书...", rid)
         s = get_settings()
-        token = feishu.get_token()
+        token = await feishu.get_token()
         receive_id = s.feishu_receive_id
 
         if result.media_bytes:
-            image_key = feishu.upload_image(token, result.media_bytes)
+            image_key = await feishu.upload_image(token, result.media_bytes)
             result.image_key = image_key
-            msg_id = feishu.send_image(token, receive_id, image_key)
-            result.message_id = msg_id
 
+            # 并行发送图片和文字
             caption = (
                 f"[Gift Final] {candidate.region} | {candidate.subject_final} "
                 f"| {candidate.price} coins | {candidate.tier}\n\n"
                 f"Prompt: {candidate.prompt}"
             )
-            feishu.send_text(token, receive_id, caption)
+            msg_id_result, _ = await asyncio.gather(
+                feishu.send_image(token, receive_id, image_key),
+                feishu.send_text(token, receive_id, caption),
+            )
+            result.message_id = msg_id_result
             logger.debug("[%s]   最终图片已发送", rid)
 
         result.status = "sent_to_feishu"
@@ -254,8 +295,6 @@ def finalize_selected(request_id: str, selected_index: int) -> PipelineResult:
         result.status = "generated_but_send_failed"
         result.error_message = f"飞书发送失败: {e}"
 
-    # 不立即清理暂存，保留给 Regenerate / Modify Request 使用
-    # 候选数据会在 30 分钟 TTL 后自动过期清理
     logger.info("[%s] Phase 2 完成: %s", rid, result.status)
     return result
 
@@ -263,16 +302,12 @@ def finalize_selected(request_id: str, selected_index: int) -> PipelineResult:
 # ── 兼容入口 ──────────────────────────────────────────────
 
 
-def generate(config: GenerationConfig) -> PipelineResult:
-    """兼容入口：Phase 1 → auto-select 第 0 张 → Phase 2。
-
-    CLI 和 API 模式使用此入口，自动选择第一张候选图。
-    始终返回 PipelineResult，异常时 status="error"。
-    """
+async def generate_async(config: GenerationConfig) -> PipelineResult:
+    """异步入口：Phase 1 → auto-select 第 0 张 → Phase 2。"""
     rid = config.request_id
     try:
-        candidate = generate_candidates(config)
-        return finalize_selected(candidate.request_id, 0)
+        candidate = await generate_candidates(config)
+        return await finalize_selected(candidate.request_id, 0)
     except Exception as e:
         logger.error("[%s] Pipeline 异常终止: %s", rid, e, exc_info=True)
         return PipelineResult(
@@ -284,3 +319,8 @@ def generate(config: GenerationConfig) -> PipelineResult:
             error_message=str(e),
             request_id=rid,
         )
+
+
+def generate(config: GenerationConfig) -> PipelineResult:
+    """同步兼容入口：CLI 和 bot_ws 使用。"""
+    return asyncio.run(generate_async(config))

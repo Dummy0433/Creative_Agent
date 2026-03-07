@@ -278,3 +278,63 @@ def build_mock_candidate(token: str, num: int = 4) -> CandidateResult:
     )
     store_candidate(candidate)
     return candidate
+
+
+# ── 路由卡片（编辑完成后引导）─────────────────────────────
+
+def build_routing_card(request_id: str) -> dict:
+    """构建"是否重新生成"路由卡片。"""
+    return {
+        "schema": "2.0",
+        "config": {"update_multi": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "What's next?"},
+            "template": "blue",
+        },
+        "body": {
+            "direction": "vertical",
+            "padding": "12px 12px 12px 12px",
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": "Would you like to regenerate the gift?",
+                },
+                {
+                    "tag": "column_set",
+                    "horizontal_spacing": "8px",
+                    "columns": [
+                        {
+                            "tag": "column",
+                            "width": "weighted",
+                            "weight": 1,
+                            "elements": [{
+                                "tag": "button",
+                                "text": {"tag": "plain_text", "content": "Yes"},
+                                "type": "primary",
+                                "width": "fill",
+                                "value": {
+                                    "action": "route_regen",
+                                    "request_id": request_id,
+                                },
+                            }],
+                        },
+                        {
+                            "tag": "column",
+                            "width": "weighted",
+                            "weight": 1,
+                            "elements": [{
+                                "tag": "button",
+                                "text": {"tag": "plain_text", "content": "No"},
+                                "type": "default",
+                                "width": "fill",
+                                "value": {
+                                    "action": "route_continue",
+                                    "request_id": request_id,
+                                },
+                            }],
+                        },
+                    ],
+                },
+            ],
+        },
+    }

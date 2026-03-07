@@ -1,12 +1,12 @@
-"""Gemini 供应商实现：图片生成和文本生成。"""
+"""Gemini 供应商实现：图片生成和文本生成（async）。"""
 
 import base64
 import json
 import logging
 
-import requests
+import httpx
 
-from providers.base import ImageProvider, TextProvider
+from providers.base import EditProvider, ImageProvider, TextProvider
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class GeminiTextProvider(TextProvider):
         self.base_url = s.gemini_base_url
         self.timeout = timeout if timeout is not None else 60
 
-    def generate(self, model: str, system_prompt: str, user_prompt: str) -> dict:
+    async def generate(self, model: str, system_prompt: str, user_prompt: str) -> dict:
         """调用 Gemini generateContent 接口，返回结构化 JSON。"""
         url = f"{self.base_url}/models/{model}:generateContent"
         headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
@@ -61,9 +61,9 @@ class GeminiTextProvider(TextProvider):
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
             "generationConfig": {"responseMimeType": "application/json"},
         }
-        resp = requests.post(url, headers=headers, json=body, timeout=self.timeout)
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(url, headers=headers, json=body)
         resp.raise_for_status()
-        # 从响应中安全提取生成的文本
         text = _extract_text_from_response(resp.json())
         return _parse_json_response(text)
 
@@ -87,7 +87,7 @@ class GeminiImageProvider(ImageProvider):
         self.aspect_ratio = aspect_ratio or d.image_aspect_ratio
         self.image_size = image_size or d.image_size
 
-    def generate(self, prompt: str, reference_images: list[bytes] | None = None) -> bytes:
+    async def generate(self, prompt: str, reference_images: list[bytes] | None = None) -> bytes:
         """依次尝试候选模型生成图片，返回图片字节数据。"""
         errors: list[str] = []  # 记录每个模型的失败原因
         for model in self.models:
@@ -113,18 +113,17 @@ class GeminiImageProvider(ImageProvider):
                     "contents": [{"parts": parts}],
                     "generationConfig": {
                         "responseModalities": ["TEXT", "IMAGE"],
-                        # 图片尺寸配置
                         "imageConfig": {
                             "aspectRatio": self.aspect_ratio,
                             "imageSize": self.image_size,
                         },
-                        # 启用深度思考模式，模型会推理复杂 prompt 后再生成终稿
                         "thinkingConfig": {
                             "thinkingLevel": "High",
                         },
                     },
                 }
-                resp = requests.post(url, headers=headers, json=body, timeout=self.timeout)
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    resp = await client.post(url, headers=headers, json=body)
                 resp.raise_for_status()
                 data = resp.json()
                 # 安全遍历响应各部分，查找内联图片数据
@@ -144,3 +143,86 @@ class GeminiImageProvider(ImageProvider):
                 errors.append(f"{model}: {e}")
                 continue
         raise RuntimeError(f"所有图片生成模型均失败: {'; '.join(errors)}")
+
+
+class GeminiEditProvider(EditProvider):
+    """基于 Gemini generateContent 的图片编辑供应商。
+
+    利用 responseModalities: ["TEXT", "IMAGE"] 一次调用
+    同时返回编辑后图片和 AI 引导文字。
+    """
+
+    def __init__(self, models: list[str] | None = None, timeout: int | None = None):
+        s = get_settings()
+        self.api_key = s.gemini_api_key
+        self.base_url = s.gemini_base_url
+        from defaults import load_defaults
+        from pathlib import Path
+        d = load_defaults()
+        self.models = models or d.edit_models
+        self.timeout = timeout if timeout is not None else d.edit_timeout
+        prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "edit_system.md"
+        self.system_prompt = prompt_path.read_text(encoding="utf-8")
+
+    async def edit(self, image, instruction, conversation_history=None):
+        from models import EditResult
+
+        history = list(conversation_history or [])
+        current_turn = {
+            "role": "user",
+            "parts": [
+                {"inlineData": {"mimeType": "image/png", "data": base64.b64encode(image).decode()}},
+                {"text": instruction},
+            ],
+        }
+        contents = history + [current_turn]
+
+        errors = []
+        for model in self.models:
+            try:
+                logger.info("  [Edit] 尝试模型: %s", model)
+                url = f"{self.base_url}/models/{model}:generateContent"
+                headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
+                body = {
+                    "system_instruction": {"parts": [{"text": self.system_prompt}]},
+                    "contents": contents,
+                    "generationConfig": {
+                        "responseModalities": ["TEXT", "IMAGE"],
+                    },
+                }
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    resp = await client.post(url, headers=headers, json=body)
+                resp.raise_for_status()
+                data = resp.json()
+
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    errors.append(f"{model}: 无 candidates")
+                    continue
+
+                parts = candidates[0].get("content", {}).get("parts", [])
+                edited_image = None
+                message_text = ""
+                for part in parts:
+                    if "inlineData" in part:
+                        edited_image = base64.b64decode(part["inlineData"]["data"])
+                    if "text" in part:
+                        message_text += part["text"]
+
+                if edited_image is None:
+                    errors.append(f"{model}: 响应中无图片")
+                    continue
+
+                updated = contents + [{"role": "model", "parts": parts}]
+
+                return EditResult(
+                    image=edited_image,
+                    message=message_text or "编辑完成，还需要调整什么吗？",
+                    updated_history=updated,
+                )
+            except Exception as e:
+                logger.warning("  [Edit] %s 失败: %s", model, e)
+                errors.append(f"{model}: {e}")
+                continue
+
+        raise RuntimeError(f"所有编辑模型均失败: {'; '.join(errors)}")
