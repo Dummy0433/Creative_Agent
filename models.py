@@ -208,6 +208,8 @@ class PipelineResult(BaseModel):
     error_message: str = ""  # 错误信息（status="error" 或 "generated_but_send_failed" 时填充）
     request_id: str = ""     # 请求追踪 ID
     image_key: str = ""      # 飞书图片 key（上传后获得）
+    file_key: str = ""       # 飞书文件 key（预上传，供 Download 使用）
+    image_id: str = ""       # 图片唯一 ID（卡片按钮关联用）
     message_id: str = ""     # 飞书消息 ID（发送后获得）
     local_path: str = ""     # 本地保存路径（后处理后填充）
     media_bytes: bytes | None = Field(default=None, exclude=True)  # 原始媒体字节（不序列化）
@@ -243,9 +245,13 @@ class EditSession(BaseModel):
     state: SessionState
     request_id: str
     current_image: bytes = Field(exclude=True)
+    image_map: dict[str, bytes] = Field(default_factory=dict, exclude=True)
     conversation_history: list[dict] = Field(default_factory=list)
     message_id_map: dict[str, str] = Field(default_factory=dict)
     original_config: GenerationConfig
+    pending_edit: bool = False
+    pending_edit_image_id: str = ""
+    file_key: str = ""
     last_active: float = Field(default_factory=lambda: __import__('time').time())
 
 

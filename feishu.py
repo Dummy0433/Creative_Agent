@@ -133,6 +133,8 @@ async def upload_image(token, image_bytes):
     """上传图片到飞书，返回 image_key。"""
     base = get_settings().feishu_base_url
     url = f"{base}/open-apis/im/v1/images"
+    is_png = image_bytes[:4] == b'\x89PNG'
+    logger.info("[上传图片] 准备上传: %d bytes, PNG=%s", len(image_bytes), is_png)
     async with _new_async_client() as client:
         resp = await client.post(
             url,
@@ -141,7 +143,9 @@ async def upload_image(token, image_bytes):
             files={"image": ("gift.png", image_bytes, "image/png")},
         )
     resp.raise_for_status()
-    data = resp.json().get("data", {})
+    resp_json = resp.json()
+    logger.info("[上传图片] 飞书响应: %s", resp_json)
+    data = resp_json.get("data", {})
     image_key = data.get("image_key")
     if not image_key:
         raise RuntimeError(f"飞书上传图片响应中缺少 image_key: {resp.text[:300]}")
@@ -175,6 +179,40 @@ async def send_text(token, receive_id, text):
     async with _new_async_client() as client:
         resp = await client.post(url, headers=_headers(token), json=body)
     resp.raise_for_status()
+
+
+async def upload_file(token, file_bytes, file_name="gift.png"):
+    """上传文件到飞书，返回 file_key（保留原始格式，不压缩）。"""
+    base = get_settings().feishu_base_url
+    url = f"{base}/open-apis/im/v1/files"
+    async with _new_async_client() as client:
+        resp = await client.post(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            data={"file_type": "stream", "file_name": file_name},
+            files={"file": (file_name, file_bytes, "application/octet-stream")},
+        )
+    resp.raise_for_status()
+    data = resp.json().get("data", {})
+    file_key = data.get("file_key")
+    if not file_key:
+        raise RuntimeError(f"飞书上传文件响应中缺少 file_key: {resp.text[:300]}")
+    return file_key
+
+
+async def send_file(token, receive_id, file_key):
+    """发送文件消息，返回 message_id。"""
+    base = get_settings().feishu_base_url
+    url = f"{base}/open-apis/im/v1/messages?receive_id_type=open_id"
+    body = {
+        "receive_id": receive_id,
+        "msg_type": "file",
+        "content": json.dumps({"file_key": file_key}),
+    }
+    async with _new_async_client() as client:
+        resp = await client.post(url, headers=_headers(token), json=body)
+    resp.raise_for_status()
+    return resp.json().get("data", {}).get("message_id", "")
 
 
 async def send_card(token, receive_id, card_content: dict):
@@ -296,6 +334,40 @@ def send_text_sync(token, receive_id, text):
     with _sync_client() as client:
         resp = client.post(url, headers=_headers(token), json=body)
     resp.raise_for_status()
+
+
+def upload_file_sync(token, file_bytes, file_name="gift.png"):
+    """上传文件到飞书（sync），返回 file_key。"""
+    base = get_settings().feishu_base_url
+    url = f"{base}/open-apis/im/v1/files"
+    with _sync_client() as client:
+        resp = client.post(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            data={"file_type": "stream", "file_name": file_name},
+            files={"file": (file_name, file_bytes, "application/octet-stream")},
+        )
+    resp.raise_for_status()
+    data = resp.json().get("data", {})
+    file_key = data.get("file_key")
+    if not file_key:
+        raise RuntimeError(f"飞书上传文件响应中缺少 file_key: {resp.text[:300]}")
+    return file_key
+
+
+def send_file_sync(token, receive_id, file_key):
+    """发送文件消息（sync），返回 message_id。"""
+    base = get_settings().feishu_base_url
+    url = f"{base}/open-apis/im/v1/messages?receive_id_type=open_id"
+    body = {
+        "receive_id": receive_id,
+        "msg_type": "file",
+        "content": json.dumps({"file_key": file_key}),
+    }
+    with _sync_client() as client:
+        resp = client.post(url, headers=_headers(token), json=body)
+    resp.raise_for_status()
+    return resp.json().get("data", {}).get("message_id", "")
 
 
 def send_card_sync(token, receive_id, card_content):

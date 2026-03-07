@@ -1,10 +1,12 @@
 """Gemini 供应商实现：图片生成和文本生成（async）。"""
 
 import base64
+import io
 import json
 import logging
 
 import httpx
+from PIL import Image
 
 from providers.base import EditProvider, ImageProvider, TextProvider
 from settings import get_settings
@@ -164,14 +166,30 @@ class GeminiEditProvider(EditProvider):
         prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "edit_system.md"
         self.system_prompt = prompt_path.read_text(encoding="utf-8")
 
+    @staticmethod
+    def _flatten_rgba(image_bytes: bytes) -> bytes:
+        """RGBA PNG → RGB PNG（白底），确保编辑模型能正常处理。"""
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode == "RGBA":
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            buf = io.BytesIO()
+            bg.save(buf, format="PNG")
+            logger.debug("  [Edit] RGBA→RGB 扁平化: %d→%d bytes", len(image_bytes), buf.tell())
+            return buf.getvalue()
+        return image_bytes
+
     async def edit(self, image, instruction, conversation_history=None):
         from models import EditResult
+
+        # 扁平化透明图片，编辑模型需要 RGB 输入
+        edit_image = self._flatten_rgba(image)
 
         history = list(conversation_history or [])
         current_turn = {
             "role": "user",
             "parts": [
-                {"inlineData": {"mimeType": "image/png", "data": base64.b64encode(image).decode()}},
+                {"inlineData": {"mimeType": "image/png", "data": base64.b64encode(edit_image).decode()}},
                 {"text": instruction},
             ],
         }
@@ -210,6 +228,10 @@ class GeminiEditProvider(EditProvider):
                         message_text += part["text"]
 
                 if edited_image is None:
+                    # 日志输出实际返回内容，便于诊断
+                    part_types = [list(p.keys()) for p in parts]
+                    logger.warning("  [Edit] %s 无图片, parts=%s, text=%s",
+                                   model, part_types, message_text[:200] if message_text else "(空)")
                     errors.append(f"{model}: 响应中无图片")
                     continue
 

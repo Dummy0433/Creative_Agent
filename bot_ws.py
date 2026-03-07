@@ -116,6 +116,18 @@ def handle_generate(sender_id: str, config: GenerationConfig) -> None:
         feishu.send_text_sync(token, sender_id, f"生成失败: {e}")
 
 
+def _send_download(sender_id: str, session: EditSession) -> None:
+    """发送透明 PNG 文件给用户（Download 按钮回调）。
+
+    优先使用预上传的 file_key（秒发），否则现场上传。
+    """
+    token = feishu.get_token_sync()
+    file_key = session.file_key
+    if not file_key:
+        file_key = feishu.upload_file_sync(token, session.current_image, "gift.png")
+    feishu.send_file_sync(token, sender_id, file_key)
+
+
 def handle_finalize(sender_id: str, request_id: str, selected_index: int) -> None:
     """Phase 2: 处理用户选择，执行后处理，创建编辑 session。"""
     token = feishu.get_token_sync()
@@ -133,8 +145,12 @@ def handle_finalize(sender_id: str, request_id: str, selected_index: int) -> Non
                 request_id=request_id,
                 current_image=result.media_bytes,
                 original_config=candidate.config,
+                file_key=result.file_key,
             )
             session.message_id_map[result.message_id] = "final"
+            session.image_map[result.message_id] = result.media_bytes
+            if result.image_id:
+                session.image_map[result.image_id] = result.media_bytes
             save_session(session)
             logger.info("[Session] 已创建 user=%s, request_id=%s", sender_id, request_id)
     except Exception as e:
@@ -155,6 +171,10 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
     logger.info("[消息] %s: type=%s, parent_id=%s, content=%s",
                 sender_id, msg_type, parent_id, content)
 
+    if msg_type == "image":
+        logger.info("[调试] 收到用户图片: image_key=%s", content.get("image_key", ""))
+        return
+
     if msg_type != "text":
         return
 
@@ -164,20 +184,31 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
 
     session = get_session(sender_id)
 
-    # 路由1: 回复了 bot 发出的图片 → 编辑
+    # 路由1: 回复了 bot 发出的图片 → 编辑（传 parent_id 以定位具体图片）
     if parent_id and session and parent_id in session.message_id_map:
         logger.info("[路由] 回复图片编辑: user=%s, parent=%s", sender_id, parent_id)
         threading.Thread(
-            target=handle_edit, args=(sender_id, session, text), daemon=True,
+            target=handle_edit, args=(sender_id, session, text, parent_id), daemon=True,
         ).start()
         return
 
     # 路由2: 有活跃 EDITING/DELIVERED session + 纯文字
     if session and session.state in (SessionState.EDITING, SessionState.DELIVERED):
-        logger.info("[路由] 编辑状态文字: user=%s, state=%s", sender_id, session.state)
-        threading.Thread(
-            target=handle_editing_text, args=(sender_id, session, text), daemon=True,
-        ).start()
+        if session.pending_edit:
+            # Modify 按钮已点击 → 下一条文字作为编辑指令，image_id 锁定目标图片
+            image_id = session.pending_edit_image_id
+            logger.info("[路由] pending_edit 编辑: user=%s, image_id=%s", sender_id, image_id)
+            session.pending_edit = False
+            session.pending_edit_image_id = ""
+            save_session(session)
+            threading.Thread(
+                target=handle_edit, args=(sender_id, session, text, image_id), daemon=True,
+            ).start()
+        else:
+            logger.info("[路由] 编辑状态文字: user=%s, state=%s", sender_id, session.state)
+            threading.Thread(
+                target=handle_editing_text, args=(sender_id, session, text), daemon=True,
+            ).start()
         return
 
     # 路由3: 默认 → 新生成
@@ -295,6 +326,28 @@ def on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
                 feishu.send_card_sync(token, open_id, GENERATE_FORM_CARD)
                 return _make_toast("请在新卡片中修改参数")
 
+            # ── 结果卡片：Modify → 进入编辑模式（锁定目标图片）──
+            if act == "start_edit":
+                image_id = action_value.get("image_id", "")
+                logger.info("[卡片] 用户=%s 点击 Modify, image_id=%s", open_id, image_id)
+                session = get_session(open_id)
+                if session:
+                    session.pending_edit = True
+                    session.pending_edit_image_id = image_id
+                    session.state = SessionState.EDITING
+                    save_session(session)
+                    return _make_toast("请输入编辑指令")
+                return _make_toast("Session 已过期，请重新生成", "warning")
+
+            # ── 结果卡片：Download → 发送透明 PNG 文件 ──
+            if act == "download_png":
+                logger.info("[卡片] 用户=%s 点击 Download", open_id)
+                session = get_session(open_id)
+                if session and session.current_image:
+                    _generate_pool.submit(_send_download, open_id, session)
+                    return _make_toast("正在准备下载...")
+                return _make_toast("Session 已过期，请重新生成", "warning")
+
             # ── 路由卡片：重新生成 ──
             if act == "route_regen":
                 logger.info("[卡片] 用户=%s 选择重新生成", open_id)
@@ -409,13 +462,56 @@ def main():
 
     _configure_logging(test_subsystems, s.log_level)
 
-    # --card: 发送 mock 卡片后继续启动 WS 监听回调
+    # --card: 发送 mock 候选卡片后继续启动 WS 监听回调
     if "--card" in sys.argv:
         token = feishu.get_token_sync()
         candidate = build_mock_candidate(token)
         card = build_candidate_card(candidate)
         msg_id = feishu.send_card_sync(token, s.feishu_receive_id, card)
-        print(f"Mock 卡片已发送! message_id={msg_id}")
+        print(f"Mock 候选卡片已发送! message_id={msg_id}")
+        print("启动 WebSocket 监听回调...")
+
+    # --result: 发送 mock 结果卡片（用 output/ 目录图片），创建 EditSession 使按钮可用
+    if "--result" in sys.argv:
+        from pathlib import Path
+        from cards import build_result_card
+
+        token = feishu.get_token_sync()
+        receive_id = s.feishu_receive_id
+
+        # 找 output/ 下第一张 PNG
+        output_dir = Path("output")
+        pngs = sorted(output_dir.glob("*.png"))
+        if not pngs:
+            print("output/ 目录下没有 PNG 文件，跳过 --result")
+        else:
+            img_path = pngs[0]
+            img_bytes = img_path.read_bytes()
+            print(f"使用测试图片: {img_path} ({len(img_bytes)} bytes)")
+
+            from uuid import uuid4
+            image_key = feishu.upload_image_sync(token, img_bytes)
+            file_key = feishu.upload_file_sync(token, img_bytes, "gift_mock.png")
+            rid = "mock_result"
+            mock_image_id = uuid4().hex[:8]
+            card = build_result_card(image_key, rid, "Mock | Test | 1 coin", image_id=mock_image_id)
+            msg_id = feishu.send_card_sync(token, receive_id, card)
+            print(f"Mock 结果卡片已发送! message_id={msg_id}, image_id={mock_image_id}")
+
+            # 创建 EditSession 使 Modify/Download 按钮可用
+            mock_session = EditSession(
+                user_id=receive_id,
+                state=SessionState.EDITING,
+                request_id=rid,
+                current_image=img_bytes,
+                original_config=GenerationConfig(region="MENA", subject="test", price=1),
+                file_key=file_key,
+            )
+            mock_session.message_id_map[msg_id] = "final"
+            mock_session.image_map[msg_id] = img_bytes
+            mock_session.image_map[mock_image_id] = img_bytes
+            save_session(mock_session)
+            print(f"Mock EditSession 已创建: user={receive_id}")
         print("启动 WebSocket 监听回调...")
 
     # 注册事件处理器
