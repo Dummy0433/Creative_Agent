@@ -21,21 +21,25 @@ Return a JSON object with these fields:
 - "request": user explicitly wants to LEAVE this conversation and submit a formal design request. Keywords: "提需求", "提单", "submit request", "下需求", "我要提个需求"
 - "stop": user explicitly wants to END the conversation entirely. Keywords: "停", "结束", "再见", "bye", "stop", "STOP", "不聊了"
 
-## Region Mapping (fuzzy match)
+## Region Mapping (fuzzy match — ALWAYS return the region CODE, never the full name)
 - 中东/阿拉伯/Middle East → MENA
-- 美国/美区 → US
-- 欧洲 → EU
-- 日本 → JP
-- 韩国 → KR
-- 台湾 → TW
-- 土耳其 → TR
-- 印尼 → ID
-- 越南 → VN
-- 泰国 → TH
-- 巴西 → BR
-- 拉美 → LATAM
-- 新加坡 → SG
-- 全球 → Global Gift
+- 美国/美区/US → US
+- 欧洲/Europe → EU
+- 日本/Japan → JP
+- 韩国/Korea → KR
+- 台湾/Taiwan → TW
+- 土耳其/Turkey → TR
+- 印尼/Indonesia → ID
+- 越南/Vietnam → VN
+- 泰国/Thailand → TH
+- 巴西/Brazil → BR
+- 拉美/Latin America → LATAM
+- 新加坡/Singapore → SG
+- 马来西亚/Malaysia → MY
+- 菲律宾/Philippines → PH
+- 澳新/ANZ → ANZ
+- 全球/Global → Global Gift
+- 东南亚/Southeast Asia → If user says "东南亚" without specifying a country, ask which country (ID/VN/TH/SG/MY/PH). Do NOT guess.
 
 ## Price Hint Mapping
 - 便宜的/低价/cheap → low

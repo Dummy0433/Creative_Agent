@@ -166,20 +166,27 @@ def handle_finalize(sender_id: str, request_id: str, selected_index: int) -> Non
 def _handle_inspire_message(sender_id: str, session, text: str) -> None:
     """处理 Inspire 对话消息（在后台线程中运行）。"""
     from pipeline.inspire import handle_inspire_message
-    from cards import REQUEST_FORM_CARD
+    from cards import build_prefilled_generate_form, build_prefilled_request_form
 
     try:
         reply, action = _run_async(handle_inspire_message(session, text))
         token = feishu.get_token_sync()
+        slots = session.slots
 
         if action == "generate":
             inspire_store.remove(sender_id)
             feishu.send_text_sync(token, sender_id, reply)
-            feishu.send_card_sync(token, sender_id, GENERATE_FORM_CARD)
+            card = build_prefilled_generate_form(
+                region=slots.region, price=slots.price, subject=slots.subject,
+            )
+            feishu.send_card_sync(token, sender_id, card)
         elif action == "request":
             inspire_store.remove(sender_id)
             feishu.send_text_sync(token, sender_id, reply)
-            feishu.send_card_sync(token, sender_id, REQUEST_FORM_CARD)
+            card = build_prefilled_request_form(
+                region=slots.region, price=slots.price, subject=slots.subject,
+            )
+            feishu.send_card_sync(token, sender_id, card)
         elif action == "stop":
             inspire_store.remove(sender_id)
             feishu.send_text_sync(token, sender_id, reply)

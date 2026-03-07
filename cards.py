@@ -9,6 +9,7 @@
 - build_mock_candidate() — 用纯色占位图构造 mock CandidateResult（测试用）
 """
 
+import copy
 import datetime
 import struct
 import zlib
@@ -197,6 +198,68 @@ REQUEST_FORM_CARD = {
         },
     ],
 }
+
+
+# ── 预填表单（Inspire exit 时使用）────────────────────────────
+
+
+def _find_form_element(card: dict, field_name: str) -> dict | None:
+    """在卡片 form 中按 name 查找元素。"""
+    for el in card.get("elements", []):
+        if el.get("tag") == "form":
+            for sub in el.get("elements", []):
+                if sub.get("name") == field_name:
+                    return sub
+    return None
+
+
+def build_prefilled_generate_form(
+    region: str | None = None,
+    price: int | None = None,
+    subject: str | None = None,
+) -> dict:
+    """基于 GENERATE_FORM_CARD 模板构建预填值的生成表单。"""
+    card = copy.deepcopy(GENERATE_FORM_CARD)
+    if region:
+        el = _find_form_element(card, "region")
+        if el:
+            # 只有 region 在 options 中存在时才预选
+            valid = {opt["value"] for opt in el.get("options", [])}
+            if region in valid:
+                el["initial_option"] = region
+    if price is not None:
+        el = _find_form_element(card, "price")
+        if el:
+            el["default_value"] = str(price)
+    if subject:
+        el = _find_form_element(card, "object")
+        if el:
+            el["default_value"] = subject
+    return card
+
+
+def build_prefilled_request_form(
+    region: str | None = None,
+    price: int | None = None,
+    subject: str | None = None,
+) -> dict:
+    """基于 REQUEST_FORM_CARD 模板构建预填值的需求表单。"""
+    card = copy.deepcopy(REQUEST_FORM_CARD)
+    if region:
+        el = _find_form_element(card, "region")
+        if el:
+            valid = {opt["value"] for opt in el.get("options", [])}
+            if region in valid:
+                el["initial_option"] = region
+    if price is not None:
+        el = _find_form_element(card, "price")
+        if el:
+            el["default_value"] = str(price)
+    if subject:
+        el = _find_form_element(card, "gift_name")
+        if el:
+            el["default_value"] = subject
+    return card
 
 
 # ── 候选图选择卡片（动态）────────────────────────────────────
