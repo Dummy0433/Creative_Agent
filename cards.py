@@ -5,9 +5,11 @@
 - build_candidate_card() — 候选图选择卡片（动态，接收 CandidateResult）
 - build_result_card()    — 结果交付卡片（图片预览 + Modify/Download 按钮）
 - build_routing_card()   — 路由引导卡片（重新生成 or 继续编辑）
+- build_calendar_card()  — Calendar 看板卡片（只读，展示 upcoming items）
 - build_mock_candidate() — 用纯色占位图构造 mock CandidateResult（测试用）
 """
 
+import datetime
 import struct
 import zlib
 
@@ -418,4 +420,123 @@ def build_routing_card(request_id: str) -> dict:
                 },
             ],
         },
+    }
+
+
+# ── Calendar 看板卡片（只读）─────────────────────────────────
+
+_STATUS_ICONS = {
+    "in Design": "\U0001f3a8",       # 🎨
+    "in Feedback": "\U0001f4ac",     # 💬
+    "Not Started": "\u231b",         # ⏳
+    "Not Scheduled": "\U0001f4cb",   # 📋
+    "Delivered": "\u2705",           # ✅
+    "Delayed": "\U0001f534",         # 🔴
+    "Pending": "\u23f8\ufe0f",       # ⏸️
+    "Cancelled": "\u274c",           # ❌
+}
+
+_DEFAULT_STATUS_ICON = "\U0001f4e6"  # 📦
+
+
+def _resolve_status_icon(progress: str) -> str:
+    """从 progress 字段提取英文状态关键字并映射 icon。"""
+    key = progress.split("//")[0].strip() if progress else ""
+    return _STATUS_ICONS.get(key, _DEFAULT_STATUS_ICON)
+
+
+def _format_deadline(ts_ms: int | float) -> str:
+    """毫秒时间戳 → MM/DD，无效时返回空字符串。"""
+    if not ts_ms:
+        return ""
+    try:
+        dt = datetime.datetime.fromtimestamp(ts_ms / 1000, tz=datetime.timezone.utc)
+        return dt.strftime("%m/%d")
+    except (OSError, ValueError, OverflowError):
+        return ""
+
+
+def build_calendar_card(records: list[dict]) -> dict:
+    """构建 Calendar 看板卡片 (schema 2.0, read-only)。
+
+    展示 upcoming gift calendar 记录，每条包含名称、状态、区域、
+    价格、截止日期、设计师/POC 和文档链接。
+    """
+    header = {
+        "title": {"tag": "plain_text", "content": "Gift Calendar"},
+        "subtitle": {
+            "tag": "plain_text",
+            "content": f"Upcoming {len(records)} items",
+        },
+        "template": "blue",
+    }
+
+    elements: list[dict] = []
+
+    if not records:
+        elements.append({
+            "tag": "markdown",
+            "content": "No data available for this quarter.",
+        })
+        return {
+            "schema": "2.0",
+            "header": header,
+            "body": {"elements": elements},
+        }
+
+    for idx, rec in enumerate(records):
+        if idx > 0:
+            elements.append({"tag": "hr"})
+
+        name = rec.get("name") or "Untitled"
+        progress = rec.get("progress") or ""
+        icon = _resolve_status_icon(progress)
+        regions = rec.get("regions") or []
+        price = rec.get("price")
+        deadline_ts = rec.get("deadline_ts") or 0
+        designer = rec.get("designer") or ""
+        poc = rec.get("poc") or ""
+        doc_link = rec.get("doc_link") or ""
+        doc_text = rec.get("doc_text") or ""
+
+        # Line 1: icon + bold name
+        lines = [f"{icon} **{name}**"]
+
+        # Line 2: regions | price | deadline
+        info_parts = []
+        if regions:
+            info_parts.append(", ".join(regions))
+        if price:
+            info_parts.append(f"{price}c")
+        deadline_str = _format_deadline(deadline_ts)
+        if deadline_str:
+            info_parts.append(deadline_str)
+        if info_parts:
+            lines.append("      " + " | ".join(info_parts))
+
+        # Line 3: designer + poc
+        people_parts = []
+        if designer:
+            people_parts.append(f"\U0001f3a8{designer}")
+        if poc:
+            people_parts.append(f"\U0001f464{poc}")
+        if people_parts:
+            lines.append("      " + " | ".join(people_parts))
+
+        # Line 4: doc link
+        if doc_link:
+            display_text = doc_text if doc_text else "Link"
+            if len(display_text) > 30:
+                display_text = display_text[:30] + "..."
+            lines.append(f"      [\U0001f4c4 {display_text}]({doc_link})")
+
+        elements.append({
+            "tag": "markdown",
+            "content": "\n".join(lines),
+        })
+
+    return {
+        "schema": "2.0",
+        "header": header,
+        "body": {"elements": elements},
     }
