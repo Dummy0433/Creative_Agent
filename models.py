@@ -88,6 +88,9 @@ class GenerationDefaults(BaseModel):
     # ── Calendar 看板 ──
     calendar_app_token: str = ""
     calendar_quarters: dict[str, CalendarQuarterConfig] = {}
+    # ── Request 提单 ──
+    request_min_working_days: int = Field(default=15, ge=1, le=60)
+    request_exception_contact: str = ""
 
     @field_validator("image_models")
     @classmethod

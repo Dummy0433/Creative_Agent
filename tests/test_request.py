@@ -59,3 +59,53 @@ def test_working_days_same_day_weekend():
     from pipeline.request import count_working_days
     day = datetime.date(2026, 3, 14)  # Saturday
     assert count_working_days(day, day) == 0
+
+
+def test_submit_missing_name():
+    """缺少礼物名应失败。"""
+    import pytest
+    from pipeline.request import submit_request
+    with pytest.raises(ValueError, match="礼物名"):
+        submit_request({"gift_name": "", "price": "100", "deadline": "2099-12-31"}, "ou_test")
+
+
+def test_submit_bad_date_format():
+    """日期格式错误应失败。"""
+    import pytest
+    from pipeline.request import submit_request
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        submit_request({"gift_name": "Test", "price": "100", "deadline": "12/31/2099"}, "ou_test")
+
+
+def test_submit_deadline_too_soon():
+    """交付时间过近应失败。"""
+    import pytest
+    import datetime
+    from pipeline.request import submit_request
+    soon = (datetime.date.today() + datetime.timedelta(days=3)).strftime("%Y-%m-%d")
+    with pytest.raises(ValueError, match="工作日"):
+        submit_request({"gift_name": "Test", "price": "100", "deadline": soon}, "ou_test")
+
+
+def test_submit_missing_price():
+    """缺少价格应失败。"""
+    import pytest
+    from pipeline.request import submit_request
+    with pytest.raises(ValueError, match="价格"):
+        submit_request({"gift_name": "Test", "price": "", "deadline": "2099-12-31"}, "ou_test")
+
+
+def test_submit_non_numeric_price():
+    """非数字价格应失败。"""
+    import pytest
+    from pipeline.request import submit_request
+    with pytest.raises(ValueError, match="数字"):
+        submit_request({"gift_name": "Test", "price": "abc", "deadline": "2099-12-31"}, "ou_test")
+
+
+def test_submit_missing_deadline():
+    """缺少交付时间应失败。"""
+    import pytest
+    from pipeline.request import submit_request
+    with pytest.raises(ValueError, match="交付时间"):
+        submit_request({"gift_name": "Test", "price": "100", "deadline": ""}, "ou_test")

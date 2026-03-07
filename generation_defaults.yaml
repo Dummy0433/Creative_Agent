@@ -67,3 +67,7 @@ calendar_quarters:
   Q4:
     table_id: ""
     view_id: ""
+
+# ── Request 提单 ──────────────────────────────────────────────
+request_min_working_days: 15
+request_exception_contact: "请联系 Gift Design 群"
