@@ -42,6 +42,12 @@ class TierProfile(BaseModel):
     image_aspect_ratio: str | None = None       # 可选：覆盖图片宽高比
 
 
+class CalendarQuarterConfig(BaseModel):
+    """季度表配置：table_id + view_id。"""
+    table_id: str
+    view_id: str
+
+
 # ── 管理员默认值（类型化 YAML）────────────────────────────────
 
 
@@ -79,6 +85,9 @@ class GenerationDefaults(BaseModel):
     edit_session_ttl: int = Field(default=1800, ge=60, le=7200)
     # 层级配置（键=层级名 如 "P0"，值=TierProfile）
     tier_profiles: dict[str, TierProfile] = {}
+    # ── Calendar 看板 ──
+    calendar_app_token: str = ""
+    calendar_quarters: dict[str, CalendarQuarterConfig] = {}
 
     @field_validator("image_models")
     @classmethod

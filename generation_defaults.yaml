@@ -51,3 +51,19 @@ tier_profiles:
   P2:
     analyze_prompt_file: "analyze_P2.md"
     prompt_gen_prompt_file: "prompt_gen_P2.md"
+
+# ── Calendar 看板 ──────────────────────────────────────────────
+calendar_app_token: "FJucbi5B0aCnpbsBDGelU0NFgug"
+calendar_quarters:
+  Q1:
+    table_id: "tblQPUBfShTwkIxb"
+    view_id: "vew6G1bwqT"
+  Q2:
+    table_id: ""
+    view_id: ""
+  Q3:
+    table_id: ""
+    view_id: ""
+  Q4:
+    table_id: ""
+    view_id: ""
