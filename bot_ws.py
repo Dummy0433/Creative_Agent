@@ -250,6 +250,17 @@ def on_menu(data: P2ApplicationBotMenuV6) -> None:
                 f"default_price: {d.default_price}"
             )
             feishu.send_text_sync(token, open_id, debug_info)
+        elif event_key == "calendar":
+            from pipeline.calendar import fetch_calendar_records
+            from cards import build_calendar_card
+            token = feishu.get_token_sync()
+            try:
+                records = fetch_calendar_records()
+                card = build_calendar_card(records)
+                feishu.send_card_sync(token, open_id, card)
+            except Exception as e:
+                logger.error("[Calendar] 拉取失败: %s", e, exc_info=True)
+                feishu.send_text_sync(token, open_id, f"Calendar 拉取失败: {e}")
         elif event_key == "inspire":
             token = feishu.get_token_sync()
             feishu.send_text_sync(token, open_id, "灵感模式即将上线!")
