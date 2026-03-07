@@ -3,6 +3,8 @@
 包含：
 - GENERATE_FORM_CARD  — 生成表单（用户填写 region/price/subject）
 - build_candidate_card() — 候选图选择卡片（动态，接收 CandidateResult）
+- build_result_card()    — 结果交付卡片（图片预览 + Modify/Download 按钮）
+- build_routing_card()   — 路由引导卡片（重新生成 or 继续编辑）
 - build_mock_candidate() — 用纯色占位图构造 mock CandidateResult（测试用）
 """
 
@@ -278,6 +280,85 @@ def build_mock_candidate(token: str, num: int = 4) -> CandidateResult:
     )
     store_candidate(candidate)
     return candidate
+
+
+# ── 结果交付卡片（图片预览 + Modify/Download）──────────────
+
+def build_result_card(image_key: str, request_id: str,
+                      caption: str = "", image_id: str = "") -> dict:
+    """构建结果交付卡片：内嵌图片预览 + Modify/Download 按钮。
+
+    image_id 唯一标识本卡片对应的图片，Modify 按钮靠它锁定编辑目标。
+    """
+    elements = [
+        {
+            "tag": "img",
+            "img_key": image_key,
+            "preview": True,
+            "scale_type": "fit_horizontal",
+        },
+    ]
+
+    if caption:
+        elements.append({
+            "tag": "markdown",
+            "content": caption,
+        })
+
+    elements.append({
+        "tag": "column_set",
+        "horizontal_spacing": "8px",
+        "columns": [
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [{
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "Modify"},
+                    "type": "primary",
+                    "width": "fill",
+                    "icon": {"tag": "standard_icon", "token": "edit_outlined"},
+                    "value": {
+                        "action": "start_edit",
+                        "request_id": request_id,
+                        "image_id": image_id,
+                    },
+                }],
+            },
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [{
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "Download PNG"},
+                    "type": "default",
+                    "width": "fill",
+                    "icon": {"tag": "standard_icon", "token": "download_outlined"},
+                    "value": {
+                        "action": "download_png",
+                        "request_id": request_id,
+                        "image_id": image_id,
+                    },
+                }],
+            },
+        ],
+    })
+
+    return {
+        "schema": "2.0",
+        "config": {"update_multi": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "Gift Result"},
+            "template": "green",
+        },
+        "body": {
+            "direction": "vertical",
+            "padding": "12px 12px 12px 12px",
+            "elements": elements,
+        },
+    }
 
 
 # ── 路由卡片（编辑完成后引导）─────────────────────────────

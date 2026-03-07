@@ -61,7 +61,18 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
 
 def matting(image_bytes: bytes) -> bytes:
     """使用 rembg 去除背景，返回透明 PNG bytes。"""
-    return remove(image_bytes)
+    result = remove(image_bytes)
+    # 确保输出为 RGBA PNG（rembg 可能返回非 PNG 格式）
+    if result[:4] != b'\x89PNG':
+        try:
+            img = Image.open(io.BytesIO(result)).convert("RGBA")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            result = buf.getvalue()
+            logger.info("[抠图] 输出非 PNG，已转换为 RGBA PNG (%d bytes)", len(result))
+        except Exception:
+            logger.warning("[抠图] 无法转换为 PNG，保留原始输出")
+    return result
 
 
 def composite(matted_bytes: bytes, gift_name: str = "",

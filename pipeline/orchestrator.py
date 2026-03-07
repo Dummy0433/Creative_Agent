@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import time
+from uuid import uuid4
 from functools import partial
 
 import feishu
@@ -247,6 +248,12 @@ async def finalize_selected(request_id: str, selected_index: int) -> PipelineRes
 
     selected_bytes = candidate.image_bytes_list[selected_index]
 
+    # 验证图片格式
+    is_png = selected_bytes[:4] == b'\x89PNG'
+    logger.info("[%s] Phase 2: 图片格式=%s, 大小=%d bytes, 有alpha=%s",
+                rid, "PNG" if is_png else "非PNG(前4字节: {})".format(selected_bytes[:4]),
+                len(selected_bytes), is_png)
+
     # 组装 PipelineResult
     result = PipelineResult(
         subject_final=candidate.subject_final,
@@ -273,21 +280,24 @@ async def finalize_selected(request_id: str, selected_index: int) -> PipelineRes
         receive_id = s.feishu_receive_id
 
         if result.media_bytes:
-            image_key = await feishu.upload_image(token, result.media_bytes)
+            # 并行上传 image（卡片预览）+ file（Download 预备）
+            image_key, file_key = await asyncio.gather(
+                feishu.upload_image(token, result.media_bytes),
+                feishu.upload_file(token, result.media_bytes, "gift_final.png"),
+            )
             result.image_key = image_key
+            result.file_key = file_key
+            result.image_id = uuid4().hex[:8]
 
-            # 并行发送图片和文字
+            from cards import build_result_card
             caption = (
-                f"[Gift Final] {candidate.region} | {candidate.subject_final} "
-                f"| {candidate.price} coins | {candidate.tier}\n\n"
-                f"Prompt: {candidate.prompt}"
+                f"{candidate.region} | {candidate.subject_final} "
+                f"| {candidate.price} coins | {candidate.tier}"
             )
-            msg_id_result, _ = await asyncio.gather(
-                feishu.send_image(token, receive_id, image_key),
-                feishu.send_text(token, receive_id, caption),
-            )
+            card = build_result_card(image_key, rid, caption, image_id=result.image_id)
+            msg_id_result = await feishu.send_card(token, receive_id, card)
             result.message_id = msg_id_result
-            logger.debug("[%s]   最终图片已发送", rid)
+            logger.debug("[%s]   结果卡片已发送 (image_id=%s)", rid, result.image_id)
 
         result.status = "sent_to_feishu"
     except Exception as e:

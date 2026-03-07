@@ -50,3 +50,9 @@ if __name__ == "__main__":
             price=d.default_price,
         )
         generate(config)
+
+
+@app.get("/health")
+async def health():
+    """健康检查端点。"""
+    return {"status": "ok", "service": "gift-prompt"}
