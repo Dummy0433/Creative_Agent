@@ -71,6 +71,12 @@ class GenerationDefaults(BaseModel):
     # 提示词覆盖（None = 使用 prompts/*.md 文件）
     analyze_system_prompt: str | None = None
     prompt_gen_system_prompt: str | None = None
+    # 编辑流
+    edit_provider: str = "gemini"
+    edit_models: list[str] = Field(default_factory=lambda: ["gemini-3.1-flash-image-preview"])
+    edit_timeout: int = Field(default=120, ge=1, le=600)
+    edit_max_rounds: int = Field(default=10, ge=1, le=50)
+    edit_session_ttl: int = Field(default=1800, ge=60, le=7200)
     # 层级配置（键=层级名 如 "P0"，值=TierProfile）
     tier_profiles: dict[str, TierProfile] = {}
 
