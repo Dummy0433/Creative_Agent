@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 from pathlib import Path
@@ -64,3 +65,58 @@ async def extract_slots(user_message: str, current_slots: InspireSlots) -> dict:
             "price_hint": None,
             "intent": "chat",
         }
+
+
+# ── 对话生成 ─────────────────────────────────────────────────────────
+
+_SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "inspire_system.md"
+
+
+def _load_system_prompt(table_context: str) -> str:
+    """加载并填充对话系统 prompt。"""
+    template = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+    return template.format(
+        today=datetime.date.today().isoformat(),
+        table_context=table_context or "(No table data yet — ask the user about region and price)",
+    )
+
+
+async def _call_chat_llm(system_prompt: str, messages: list[dict]) -> str:
+    """调用主模型生成对话回复（支持多轮历史）。"""
+    s = get_settings()
+    d = load_defaults()
+    model = d.inspire_chat_model
+    url = f"{s.gemini_base_url}/models/{model}:generateContent"
+    headers = {"x-goog-api-key": s.gemini_api_key, "Content-Type": "application/json"}
+
+    contents = []
+    for msg in messages:
+        contents.append({
+            "role": msg["role"],
+            "parts": [{"text": msg["text"]}],
+        })
+
+    body = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": contents,
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(url, headers=headers, json=body)
+    resp.raise_for_status()
+    data = resp.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
+
+
+async def generate_response(
+    conversation_history: list[dict],
+    table_context: str,
+    user_message: str,
+) -> str:
+    """生成 Inspire 对话回复。"""
+    try:
+        system_prompt = _load_system_prompt(table_context)
+        messages = list(conversation_history) + [{"role": "user", "text": user_message}]
+        return await _call_chat_llm(system_prompt, messages)
+    except Exception as e:
+        logger.error("[Inspire] 对话生成失败: %s", e, exc_info=True)
+        return "抱歉，我遇到了一些问题，请稍后再试。你可以继续描述你的想法，或者输入 'stop' 结束对话。"
