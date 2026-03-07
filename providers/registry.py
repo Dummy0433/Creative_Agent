@@ -35,8 +35,26 @@ def get_text_provider(name: str | None = None, **kwargs):
     return cls(**kwargs)
 
 
+_edit_providers: dict[str, type] = {}
+
+
+def register_edit_provider(name: str, cls: type):
+    """注册一个图片编辑供应商。"""
+    _edit_providers[name] = cls
+
+
+def get_edit_provider(name: str | None = None, **kwargs):
+    """根据名称获取编辑供应商实例。"""
+    name = name or load_defaults().edit_provider
+    cls = _edit_providers.get(name)
+    if cls is None:
+        raise KeyError(f"未知的编辑供应商: {name!r}，已注册: {list(_edit_providers)}")
+    return cls(**kwargs)
+
+
 # ── 自动注册内置供应商 ────────────────────────────────────
-from providers.gemini import GeminiImageProvider, GeminiTextProvider  # noqa: E402
+from providers.gemini import GeminiEditProvider, GeminiImageProvider, GeminiTextProvider  # noqa: E402
 
 register_image_provider("gemini", GeminiImageProvider)
 register_text_provider("gemini", GeminiTextProvider)
+register_edit_provider("gemini", GeminiEditProvider)

@@ -24,3 +24,17 @@ class TextProvider(ABC):
     async def generate(self, model: str, system_prompt: str, user_prompt: str) -> dict:
         """根据系统提示和用户输入生成结构化 JSON 响应。"""
         ...
+
+
+class EditProvider(ABC):
+    """图片编辑供应商抽象基类。"""
+
+    @abstractmethod
+    async def edit(
+        self,
+        image: bytes,
+        instruction: str,
+        conversation_history: list[dict] | None = None,
+    ) -> "EditResult":
+        """编辑图片，返回 EditResult（编辑后图片 + AI 引导文字 + 更新后历史）。"""
+        ...
